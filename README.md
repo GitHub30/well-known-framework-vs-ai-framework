@@ -61,10 +61,12 @@ Google Driveと同等のMaterial Design 3 UI・機能・PWA・SEO/AEO/GEO/AIO/LL
 .
 ├── SPEC.md                        # 全4フレームワーク統一アプリケーション仕様
 ├── apps/
-│   ├── ai-framework/              # 依存ゼロAI自作フレームワーク (:8081)
+│   ├── ai-framework/              # 依存ゼロAI自作フレームワーク (:8081) + build-single.php
 │   ├── laravel/                   # Laravel 13 (:8082)
 │   ├── phalcon/                   # Phalcon 5 C拡張 (:8083)
 │   └── slim/                      # Slim 4 (:8084)
+├── dist/
+│   └── index.php                  # ★単一ファイル版 AI自作FW（レンタルサーバーに1ファイル置くだけで動作）
 ├── shared/
 │   ├── database/                  # 共通SQLiteスキーマ & 71件シード生成器
 │   ├── public/                    # 共通UI CSS/JS・Service Worker・PWAアイコン/スクリーンショット
@@ -91,7 +93,39 @@ Google Driveと同等のMaterial Design 3 UI・機能・PWA・SEO/AEO/GEO/AIO/LL
 
 ## 各アプリのデプロイ方法
 
-### 0. 全フレームワーク共通の前提条件
+### ★ 最短30秒：単一ファイル版 AI自作FW（レンタルサーバーに1ファイル置くだけ）
+
+[**`dist/index.php`**](dist/index.php)（約 645 KB）は、AI自作フレームワーク本体・全HTMLテンプレート・CSS/JS・Service Worker・PWAアイコン/スクリーンショット・SQLiteスキーマ＆自動シーダーを **たった1つのPHPファイルに完全統合** したスタンドアロン版です。
+
+**エックスサーバー / さくらのレンタルサーバ / ロリポップ / ConoHa WING / MixHost** などの一般的なPHP 8.3対応レンタルサーバーに、FTPやファイルマネージャーで `index.php` をアップロードするだけでそのまま動作します（Composer・SSH・環境変数・手動DB構築すべて不要）。
+
+1. **`dist/index.php` をダウンロード**し、レンタルサーバーの公開ディレクトリ（ドメインまたはサブドメインのドキュメントルート、例: `public_html/index.php`）へアップロードする。
+2. ブラウザで `https://あなたのドメイン/` にアクセスする。
+3. **初回アクセス時に以下が自動構築され、すぐにGoogle Drive画面が表示されます**:
+   - `.clouddrive_data/`（権限 `0700`＋アクセス拒否 `.htaccess`＋空 `index.html`）を自動作成
+   - 256bit暗号学的ランダム鍵を `.clouddrive_data/.app_secret`（権限 `0600`）へ自動生成
+   - SQLite WALデータベース（`.clouddrive_data/database.sqlite`）を作成し、71件のサンプルファイル＆フォルダを自動投入（GD拡張が無い環境でもフォールバック動作）
+   - Apache / LiteSpeed 環境で `.htaccess` が未配置の場合、さくら/ロリポップ等でもHTTP 500を起こさない安全な `.htaccess`（`Options` ディレクティブ不使用＋ドットファイル403遮断＋クリーンURL転送）を自動生成
+   - `/assets/*`・`/sw.js`・アイコン等は `__HALT_COMPILER()` 以降のバイナリ領域から `ETag` / `304 Not Modified` 対応で直接配信
+
+> **オプション環境変数（必要な場合のみ）**:
+> - `CLOUDDRIVE_SKIP_SEED=1`: 初回サンプル71件を入れず、空のドライブとして開始
+> - `CLOUDDRIVE_DATA_DIR=/path/outside/public_html`: データ保存先を公開ディレクトリ外へ明示移動
+> - `APP_URL=https://drive.example.com`: `canonical` / `robots.txt` / `sitemap.xml` のオリジンURLを厳格固定
+> - `APP_SECRET=<64文字の16進乱数>`: CSRF署名鍵を環境変数で明示指定
+> - `CLOUDDRIVE_NO_HTACCESS=1`: `.htaccess` の自動生成を無効化
+
+```bash
+# ローカルで1ファイル単体起動テスト（環境変数・DB事前準備すべて不要）
+php -S 127.0.0.1:8085 dist/index.php
+
+# apps/ai-framework や shared/ を編集した後に dist/index.php を再ビルド
+./shared/sync-assets.sh && php apps/ai-framework/build-single.php dist/index.php
+```
+
+---
+
+### 0. 全フレームワーク共通の前提条件（VPS / 本番マルチファイル構成）
 
 - **OS / Webサーバー**: Linux (Ubuntu 24.04 推奨) + Nginx 1.24+
 - **PHP**: PHP 8.3 以上（`php8.3-fpm`, `php8.3-cli`, `php8.3-sqlite3`, `php8.3-mbstring`, `php8.3-gd`, `php8.3-xml`, `php8.3-curl`, `php8.3-opcache`）
@@ -193,7 +227,7 @@ env[APP_URL] = https://drive.example.com
 
 ### 1. AI自作フレームワーク（`apps/ai-framework`）のデプロイ
 
-Composer・`vendor/`・外部拡張が一切不要なため、最も軽量・シンプルにデプロイできます。
+Composer・`vendor/`・外部拡張が一切不要なため、最も軽量・シンプルにデプロイできます（レンタルサーバーへ1ファイルだけで置きたい場合は上記の [`dist/index.php`](dist/index.php) をご利用ください）。
 
 ```bash
 cd /var/www/clouddrive

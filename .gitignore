@@ -10,6 +10,9 @@ apps/*/storage/uploads/*
 !apps/*/storage/uploads/.gitkeep
 apps/*/storage/cache/*
 !apps/*/storage/cache/.gitkeep
+.clouddrive_data/
+dist/.clouddrive_data/
+dist/.htaccess
 
 # Laravel runtime artifacts
 apps/laravel/.env
