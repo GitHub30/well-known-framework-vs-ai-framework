@@ -1,0 +1,24 @@
+# Dependencies
+apps/*/vendor/
+node_modules/
+
+# Runtime SQLite databases, uploads, and compiled caches (regenerated via seed.php / sync-assets.sh / artisan optimize)
+apps/*/storage/database.sqlite
+apps/*/storage/database.sqlite-wal
+apps/*/storage/database.sqlite-shm
+apps/*/storage/uploads/*
+!apps/*/storage/uploads/.gitkeep
+apps/*/storage/cache/*
+!apps/*/storage/cache/.gitkeep
+
+# Laravel runtime artifacts
+apps/laravel/.env
+apps/laravel/bootstrap/cache/*.php
+apps/laravel/storage/framework/cache/data/*
+apps/laravel/storage/framework/sessions/*
+apps/laravel/storage/framework/views/*.php
+apps/laravel/storage/logs/*.log
+
+# OS / Editor
+.DS_Store
+*.swp

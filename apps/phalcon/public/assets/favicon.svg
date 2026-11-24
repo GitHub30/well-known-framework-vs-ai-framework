@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="CloudDrive">
+  <rect width="64" height="64" rx="14" fill="#ffffff"/>
+  <path d="M23.5 11h17l15.5 27-8.5 14.5-15.5-27L23.5 11z" fill="#fbbc04"/>
+  <path d="M8 38l8.5 14.5h31L56 38H24.5L8 38z" fill="#1a73e8"/>
+  <path d="M23.5 11L8 38l8.5 14.5L32 25.5 23.5 11z" fill="#34a853"/>
+  <path d="M24.5 38l-8 14.5h15.5L24.5 38z" fill="#1967d2"/>
+</svg>

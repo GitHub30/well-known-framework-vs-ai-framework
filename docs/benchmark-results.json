@@ -1,0 +1,2519 @@
+{
+  "environment": {
+    "timestamp": "2026-11-24T21:56:12.123Z",
+    "hostname": "devbox",
+    "os": "Linux 6.18.57 (x64)",
+    "cpu_model": "Intel(R) Xeon(R) CPU @ 2.30GHz",
+    "cpu_cores": 2,
+    "total_memory_gb": 7.77,
+    "php_version": "8.3.6",
+    "sqlite_version": "3.45.1",
+    "nginx_version": "nginx version: nginx/1.24.0 (Ubuntu)",
+    "framework_versions": {
+      "ai-framework": "1.0.0 (zero external dependencies)",
+      "laravel": "v13.43.0",
+      "phalcon": "5.23.0 (C extension)",
+      "slim": "4.15.3"
+    },
+    "fpm_pool": {
+      "pm": "static",
+      "max_children": 4,
+      "opcache_validate_timestamps": 0,
+      "opcache_memory_mb": 256
+    }
+  },
+  "scenarios": [
+    {
+      "id": "ssr_home",
+      "label": "SSR Home (GET /)",
+      "method": "GET",
+      "path": "/",
+      "threads": 2,
+      "connections": 16,
+      "warmupSec": 3,
+      "durationSec": 6,
+      "runs": 3
+    },
+    {
+      "id": "ssr_folder",
+      "label": "SSR Folder CTE (GET /drive/folders/1)",
+      "method": "GET",
+      "path": "/drive/folders/1",
+      "threads": 2,
+      "connections": 16,
+      "warmupSec": 3,
+      "durationSec": 6,
+      "runs": 3
+    },
+    {
+      "id": "api_items",
+      "label": "API List (GET /api/items?view=my-drive)",
+      "method": "GET",
+      "path": "/api/items?view=my-drive&sort=updated_at&dir=desc",
+      "threads": 2,
+      "connections": 16,
+      "warmupSec": 3,
+      "durationSec": 6,
+      "runs": 3
+    },
+    {
+      "id": "api_search",
+      "label": "API Search (GET /api/items?q=企画)",
+      "method": "GET",
+      "path": "/api/items?q=%E4%BC%81%E7%94%BB",
+      "threads": 2,
+      "connections": 16,
+      "warmupSec": 3,
+      "durationSec": 6,
+      "runs": 3
+    },
+    {
+      "id": "api_health",
+      "label": "API Health (GET /api/health)",
+      "method": "GET",
+      "path": "/api/health",
+      "threads": 2,
+      "connections": 16,
+      "warmupSec": 3,
+      "durationSec": 6,
+      "runs": 3
+    },
+    {
+      "id": "api_write_patch",
+      "label": "API Authenticated Write (PATCH /api/items/6)",
+      "method": "PATCH",
+      "path": "/api/items/6",
+      "threads": 2,
+      "connections": 4,
+      "warmupSec": 2,
+      "durationSec": 5,
+      "runs": 3
+    }
+  ],
+  "frameworks": {
+    "ai-framework": {
+      "static_footprint": {
+        "app_php_files": 25,
+        "app_nonempty_loc": 3042,
+        "vendor_php_files": 0,
+        "vendor_bytes": 0,
+        "vendor_mb": 0,
+        "native_extension_bytes": 0,
+        "native_extension_mb": 0
+      },
+      "wrk": {
+        "ssr_home": {
+          "rps_median": 900.94,
+          "rps_min": 872.45,
+          "rps_max": 903.54,
+          "transfer_mb_s_median": 67.556,
+          "latency_ms": {
+            "mean": 17.706,
+            "p50": 17.564,
+            "p90": 20.527,
+            "p95": 21.697,
+            "p99": 24.323,
+            "max": 34.875
+          },
+          "total_errors_across_runs": 0,
+          "raw_runs": [
+            {
+              "requests": 5249,
+              "duration_us": 6016403,
+              "bytes": 412786968,
+              "rps": 872.45,
+              "transfer_mb_s": 65.432,
+              "latency_us": {
+                "mean": 18300.1,
+                "stdev": 3388.7,
+                "max": 48741,
+                "p50": 17691,
+                "p75": 19512,
+                "p90": 21862,
+                "p95": 24480,
+                "p99": 31609,
+                "p999": 39255
+              },
+              "errors": {
+                "connect": 0,
+                "read": 0,
+                "write": 0,
+                "status": 0,
+                "timeout": 0
+              }
+            },
+            {
+              "requests": 5437,
+              "duration_us": 6017466,
+              "bytes": 427560424,
+              "rps": 903.54,
+              "transfer_mb_s": 67.762,
+              "latency_us": {
+                "mean": 17653.1,
+                "stdev": 2418.6,
+                "max": 35733,
+                "p50": 17407,
+                "p75": 18993,
+                "p90": 20599,
+                "p95": 21675,
+                "p99": 25317,
+                "p999": 30087
+              },
+              "errors": {
+                "connect": 0,
+                "read": 0,
+                "write": 0,
+                "status": 0,
+                "timeout": 0
+              }
+            },
+            {
+              "requests": 5428,
+              "duration_us": 6024816,
+              "bytes": 426782737,
+              "rps": 900.94,
+              "transfer_mb_s": 67.556,
+              "latency_us": {
+                "mean": 17706,
+                "stdev": 2331.7,
+                "max": 34875,
+                "p50": 17564,
+                "p75": 19029,
+                "p90": 20527,
+                "p95": 21697,
+                "p99": 24323,
+                "p999": 30582
+              },
+              "errors": {
+                "connect": 0,
+                "read": 0,
+                "write": 0,
+                "status": 0,
+                "timeout": 0
+              }
+            }
+          ]
+        },
+        "ssr_folder": {
+          "rps_median": 1106.8,
+          "rps_min": 1097.53,
+          "rps_max": 1117.5,
+          "transfer_mb_s_median": 56.769,
+          "latency_ms": {
+            "mean": 14.421,
+            "p50": 14.286,
+            "p90": 16.714,
+            "p95": 17.525,
+            "p99": 19.283,
+            "max": 25.275
+          },
+          "total_errors_across_runs": 0,
+          "raw_runs": [
+            {
+              "requests": 6721,
+              "duration_us": 6014307,
+              "bytes": 361525419,
+              "rps": 1117.5,
+              "transfer_mb_s": 57.326,
+              "latency_us": {
+                "mean": 14290.1,
+                "stdev": 1778.3,
+                "max": 25310,
+                "p50": 14143,
+                "p75": 15411,
+                "p90": 16606,
+                "p95": 17396,
+                "p99": 19015,
+                "p999": 21202
+              },
+              "errors": {
+                "connect": 0,
+                "read": 0,
+                "write": 0,
+                "status": 0,
+                "timeout": 0
+              }
+            },
+            {
+              "requests": 6662,
+              "duration_us": 6019129,
+              "bytes": 358295413,
+              "rps": 1106.8,
+              "transfer_mb_s": 56.769,
+              "latency_us": {
+                "mean": 14420.7,
+                "stdev": 1805.3,
+                "max": 25275,
+                "p50": 14286,
+                "p75": 15524,
+                "p90": 16714,
+                "p95": 17525,
+                "p99": 19283,
+                "p999": 21852
+              },
+              "errors": {
+                "connect": 0,
+                "read": 0,
+                "write": 0,
+                "status": 0,
+                "timeout": 0
+              }
+            },
+            {
+              "requests": 6611,
+              "duration_us": 6023540,
+              "bytes": 355608524,
+              "rps": 1097.53,
+              "transfer_mb_s": 56.302,
+              "latency_us": {
+                "mean": 14533.2,
+                "stdev": 1933.5,
+                "max": 26539,
+                "p50": 14330,
+                "p75": 15659,
+                "p90": 17001,
+                "p95": 17946,
+                "p99": 20095,
+                "p999": 23708
+              },
+              "errors": {
+                "connect": 0,
+                "read": 0,
+                "write": 0,
+                "status": 0,
+                "timeout": 0
+              }
+            }
+          ]
+        },
+        "api_items": {
+          "rps_median": 1435.11,
+          "rps_min": 1423.3,
+          "rps_max": 1495.74,
+          "transfer_mb_s_median": 11.079,
+          "latency_ms": {
+            "mean": 11.127,
+            "p50": 10.882,
+            "p90": 13.16,
+            "p95": 14.085,
+            "p99": 16.671,
+            "max": 23.716
+          },
+          "total_errors_across_runs": 0,
+          "raw_runs": [
+            {
+              "requests": 8635,
+              "duration_us": 6016966,
+              "bytes": 69901907,
+              "rps": 1435.11,
+              "transfer_mb_s": 11.079,
+              "latency_us": {
+                "mean": 11126.8,
+                "stdev": 1686.9,
+                "max": 23716,
+                "p50": 10882,
+                "p75": 11945,
+                "p90": 13160,
+                "p95": 14085,
+                "p99": 16671,
+                "p999": 20413
+              },
+              "errors": {
+                "connect": 0,
+                "read": 0,
+                "write": 0,
+                "status": 0,
+                "timeout": 0
+              }
+            },
+            {
+              "requests": 8560,
+              "duration_us": 6014173,
+              "bytes": 69286844,
+              "rps": 1423.3,
+              "transfer_mb_s": 10.987,
+              "latency_us": {
+                "mean": 11219.1,
+                "stdev": 2024.5,
+                "max": 28857,
+                "p50": 10840,
+                "p75": 11997,
+                "p90": 13716,
+                "p95": 15199,
+                "p99": 18360,
+                "p999": 23086
+              },
+              "errors": {
+                "connect": 0,
+                "read": 0,
+                "write": 0,
+                "status": 0,
+                "timeout": 0
+              }
+            },
+            {
+              "requests": 8997,
+              "duration_us": 6015076,
+              "bytes": 72821775,
+              "rps": 1495.74,
+              "transfer_mb_s": 11.546,
+              "latency_us": {
+                "mean": 10675.3,
+                "stdev": 1452.1,
+                "max": 19987,
+                "p50": 10565,
+                "p75": 11452,
+                "p90": 12506,
+                "p95": 13247,
+                "p99": 14978,
+                "p999": 17717
+              },
+              "errors": {
+                "connect": 0,
+                "read": 0,
+                "write": 0,
+                "status": 0,
+                "timeout": 0
+              }
+            }
+          ]
+        },
+        "api_search": {
+          "rps_median": 1476.01,
+          "rps_min": 1424.24,
+          "rps_max": 1491.24,
+          "transfer_mb_s_median": 3.295,
+          "latency_ms": {
+            "mean": 10.818,
+            "p50": 10.722,
+            "p90": 12.566,
+            "p95": 13.25,
+            "p99": 14.612,
+            "max": 18.453
+          },
+          "total_errors_across_runs": 0,
+          "raw_runs": [
+            {
+              "requests": 8975,
+              "duration_us": 6018482,
+              "bytes": 21010475,
+              "rps": 1491.24,
+              "transfer_mb_s": 3.329,
+              "latency_us": {
+                "mean": 10705.2,
+                "stdev": 1415.9,
+                "max": 19740,
+                "p50": 10560,
+                "p75": 11500,
+                "p90": 12490,
+                "p95": 13206,
+                "p99": 15026,
+                "p999": 17307
+              },
+              "errors": {
+                "connect": 0,
+                "read": 0,
+                "write": 0,
+                "status": 0,
+                "timeout": 0
+              }
+            },
+            {
+              "requests": 8878,
+              "duration_us": 6014865,
+              "bytes": 20783398,
+              "rps": 1476.01,
+              "transfer_mb_s": 3.295,
+              "latency_us": {
+                "mean": 10817.9,
+                "stdev": 1375.8,
+                "max": 18453,
+                "p50": 10722,
+                "p75": 11637,
+                "p90": 12566,
+                "p95": 13250,
+                "p99": 14612,
+                "p999": 16517
+              },
+              "errors": {
+                "connect": 0,
+                "read": 0,
+                "write": 0,
+                "status": 0,
+                "timeout": 0
+              }
+            },
+            {
+              "requests": 8577,
+              "duration_us": 6022164,
+              "bytes": 20078757,
+              "rps": 1424.24,
+              "transfer_mb_s": 3.18,
+              "latency_us": {
+                "mean": 11210,
+                "stdev": 1621.8,
+                "max": 22014,
+                "p50": 10998,
+                "p75": 12042,
+                "p90": 13233,
+                "p95": 14116,
+                "p99": 16543,
+                "p999": 18830
+              },
+              "errors": {
+                "connect": 0,
+                "read": 0,
+                "write": 0,
+                "status": 0,
+                "timeout": 0
+              }
+            }
+          ]
+        },
+        "api_health": {
+          "rps_median": 2116.22,
+          "rps_min": 2062.99,
+          "rps_max": 2170.03,
+          "transfer_mb_s_median": 1.578,
+          "latency_ms": {
+            "mean": 7.545,
+            "p50": 7.421,
+            "p90": 8.944,
+            "p95": 9.508,
+            "p99": 10.768,
+            "max": 26.18
+          },
+          "total_errors_across_runs": 0,
+          "raw_runs": [
+            {
+              "requests": 12719,
+              "duration_us": 6010234,
+              "bytes": 9946258,
+              "rps": 2116.22,
+              "transfer_mb_s": 1.578,
+              "latency_us": {
+                "mean": 7545.2,
+                "stdev": 1129.5,
+                "max": 26180,
+                "p50": 7421,
+                "p75": 8154,
+                "p90": 8944,
+                "p95": 9508,
+                "p99": 10768,
+                "p999": 15005
+              },
+              "errors": {
+                "connect": 0,
+                "read": 0,
+                "write": 0,
+                "status": 0,
+                "timeout": 0
+              }
+            },
+            {
+              "requests": 13046,
+              "duration_us": 6011896,
+              "bytes": 10201972,
+              "rps": 2170.03,
+              "transfer_mb_s": 1.618,
+              "latency_us": {
+                "mean": 7356.8,
+                "stdev": 1038.9,
+                "max": 16240,
+                "p50": 7228,
+                "p75": 7929,
+                "p90": 8663,
+                "p95": 9181,
+                "p99": 10480,
+                "p999": 12592
+              },
+              "errors": {
+                "connect": 0,
+                "read": 0,
+                "write": 0,
+                "status": 0,
+                "timeout": 0
+              }
+            },
+            {
+              "requests": 12416,
+              "duration_us": 6018442,
+              "bytes": 9709312,
+              "rps": 2062.99,
+              "transfer_mb_s": 1.539,
+              "latency_us": {
+                "mean": 7740,
+                "stdev": 1454.1,
+                "max": 27181,
+                "p50": 7469,
+                "p75": 8325,
+                "p90": 9483,
+                "p95": 10518,
+                "p99": 12934,
+                "p999": 15503
+              },
+              "errors": {
+                "connect": 0,
+                "read": 0,
+                "write": 0,
+                "status": 0,
+                "timeout": 0
+              }
+            }
+          ]
+        },
+        "api_write_patch": {
+          "rps_median": 723,
+          "rps_min": 662.03,
+          "rps_max": 726.3,
+          "transfer_mb_s_median": 0.842,
+          "latency_ms": {
+            "mean": 7.686,
+            "p50": 3.491,
+            "p90": 18.523,
+            "p95": 24.082,
+            "p99": 40.356,
+            "max": 109.651
+          },
+          "total_errors_across_runs": 0,
+          "raw_runs": [
+            {
+              "requests": 3317,
+              "duration_us": 5010350,
+              "bytes": 4050057,
+              "rps": 662.03,
+              "transfer_mb_s": 0.771,
+              "latency_us": {
+                "mean": 10245.1,
+                "stdev": 14697.7,
+                "max": 140168,
+                "p50": 3836,
+                "p75": 13017,
+                "p90": 26031,
+                "p95": 38510,
+                "p99": 77786,
+                "p999": 115996
+              },
+              "errors": {
+                "connect": 0,
+                "read": 0,
+                "write": 0,
+                "status": 0,
+                "timeout": 0
+              }
+            },
+            {
+              "requests": 3623,
+              "duration_us": 5011038,
+              "bytes": 4423683,
+              "rps": 723,
+              "transfer_mb_s": 0.842,
+              "latency_us": {
+                "mean": 7686,
+                "stdev": 9133.8,
+                "max": 109651,
+                "p50": 3491,
+                "p75": 10775,
+                "p90": 18523,
+                "p95": 24082,
+                "p99": 40356,
+                "p999": 87503
+              },
+              "errors": {
+                "connect": 0,
+                "read": 0,
+                "write": 0,
+                "status": 0,
+                "timeout": 0
+              }
+            },
+            {
+              "requests": 3638,
+              "duration_us": 5008948,
+              "bytes": 4441998,
+              "rps": 726.3,
+              "transfer_mb_s": 0.846,
+              "latency_us": {
+                "mean": 9311.9,
+                "stdev": 14076.6,
+                "max": 130521,
+                "p50": 3337,
+                "p75": 11659,
+                "p90": 21687,
+                "p95": 34136,
+                "p99": 77462,
+                "p999": 119501
+              },
+              "errors": {
+                "connect": 0,
+                "read": 0,
+                "write": 0,
+                "status": 0,
+                "timeout": 0
+              }
+            }
+          ]
+        }
+      },
+      "fpm_rss": {
+        "master_kb": 8272,
+        "worker_count": 4,
+        "worker_avg_kb": 18675,
+        "total_pool_kb": 82972,
+        "total_pool_mb": 81.03
+      },
+      "php_probe": {
+        "ssr_home": {
+          "samples": 12,
+          "php_time_us_median": 1656.2,
+          "mem_emalloc_peak_kb_median": 606.3,
+          "mem_real_peak_kb_median": 2048,
+          "included_files_median": 20,
+          "declared_classes_median": 238
+        },
+        "ssr_folder": {
+          "samples": 12,
+          "php_time_us_median": 1390.8,
+          "mem_emalloc_peak_kb_median": 526.6,
+          "mem_real_peak_kb_median": 2048,
+          "included_files_median": 20,
+          "declared_classes_median": 238
+        },
+        "api_items": {
+          "samples": 12,
+          "php_time_us_median": 964.7,
+          "mem_emalloc_peak_kb_median": 422.3,
+          "mem_real_peak_kb_median": 2048,
+          "included_files_median": 14,
+          "declared_classes_median": 235
+        },
+        "api_health": {
+          "samples": 12,
+          "php_time_us_median": 626.1,
+          "mem_emalloc_peak_kb_median": 382.6,
+          "mem_real_peak_kb_median": 2048,
+          "included_files_median": 15,
+          "declared_classes_median": 236
+        }
+      }
+    },
+    "laravel": {
+      "static_footprint": {
+        "app_php_files": 43,
+        "app_nonempty_loc": 4280,
+        "vendor_php_files": 6026,
+        "vendor_bytes": 28297671,
+        "vendor_mb": 26.99,
+        "native_extension_bytes": 0,
+        "native_extension_mb": 0
+      },
+      "wrk": {
+        "ssr_home": {
+          "rps_median": 260.41,
+          "rps_min": 251.87,
+          "rps_max": 261.35,
+          "transfer_mb_s_median": 19.548,
+          "latency_ms": {
+            "mean": 61.011,
+            "p50": 60.114,
+            "p90": 68.242,
+            "p95": 72.337,
+            "p99": 89.411,
+            "max": 116.302
+          },
+          "total_errors_across_runs": 0,
+          "raw_runs": [
+            {
+              "requests": 1570,
+              "duration_us": 6029045,
+              "bytes": 123582170,
+              "rps": 260.41,
+              "transfer_mb_s": 19.548,
+              "latency_us": {
+                "mean": 61010.9,
+                "stdev": 7218.7,
+                "max": 116302,
+                "p50": 60114,
+                "p75": 63756,
+                "p90": 68242,
+                "p95": 72337,
+                "p99": 89411,
+                "p999": 116233
+              },
+              "errors": {
+                "connect": 0,
+                "read": 0,
+                "write": 0,
+                "status": 0,
+                "timeout": 0
+              }
+            },
+            {
+              "requests": 1577,
+              "duration_us": 6034004,
+              "bytes": 124133148,
+              "rps": 261.35,
+              "transfer_mb_s": 19.619,
+              "latency_us": {
+                "mean": 60672.7,
+                "stdev": 5283.9,
+                "max": 97114,
+                "p50": 60461,
+                "p75": 63768,
+                "p90": 67011,
+                "p95": 69168,
+                "p99": 74616,
+                "p999": 90163
+              },
+              "errors": {
+                "connect": 0,
+                "read": 0,
+                "write": 0,
+                "status": 0,
+                "timeout": 0
+              }
+            },
+            {
+              "requests": 1519,
+              "duration_us": 6030952,
+              "bytes": 119568022,
+              "rps": 251.87,
+              "transfer_mb_s": 18.907,
+              "latency_us": {
+                "mean": 63218.7,
+                "stdev": 8505.6,
+                "max": 116159,
+                "p50": 61841,
+                "p75": 65991,
+                "p90": 71997,
+                "p95": 79436,
+                "p99": 95252,
+                "p999": 105183
+              },
+              "errors": {
+                "connect": 0,
+                "read": 0,
+                "write": 0,
+                "status": 0,
+                "timeout": 0
+              }
+            }
+          ]
+        },
+        "ssr_folder": {
+          "rps_median": 270.89,
+          "rps_min": 264.4,
+          "rps_max": 278.73,
+          "transfer_mb_s_median": 13.892,
+          "latency_ms": {
+            "mean": 58.844,
+            "p50": 57.789,
+            "p90": 65.363,
+            "p95": 70.099,
+            "p99": 85.049,
+            "max": 95.493
+          },
+          "total_errors_across_runs": 0,
+          "raw_runs": [
+            {
+              "requests": 1682,
+              "duration_us": 6034620,
+              "bytes": 90445407,
+              "rps": 278.73,
+              "transfer_mb_s": 14.293,
+              "latency_us": {
+                "mean": 57093.9,
+                "stdev": 5164.9,
+                "max": 93324,
+                "p50": 56784,
+                "p75": 60029,
+                "p90": 63683,
+                "p95": 65266,
+                "p99": 70145,
+                "p999": 88787
+              },
+              "errors": {
+                "connect": 0,
+                "read": 0,
+                "write": 0,
+                "status": 0,
+                "timeout": 0
+              }
+            },
+            {
+              "requests": 1593,
+              "duration_us": 6024950,
+              "bytes": 85659078,
+              "rps": 264.4,
+              "transfer_mb_s": 13.559,
+              "latency_us": {
+                "mean": 60150,
+                "stdev": 8395.8,
+                "max": 103412,
+                "p50": 58863,
+                "p75": 63230,
+                "p90": 69376,
+                "p95": 76219,
+                "p99": 91793,
+                "p999": 101419
+              },
+              "errors": {
+                "connect": 0,
+                "read": 0,
+                "write": 0,
+                "status": 0,
+                "timeout": 0
+              }
+            },
+            {
+              "requests": 1629,
+              "duration_us": 6013493,
+              "bytes": 87594519,
+              "rps": 270.89,
+              "transfer_mb_s": 13.892,
+              "latency_us": {
+                "mean": 58844.5,
+                "stdev": 6511.4,
+                "max": 95493,
+                "p50": 57789,
+                "p75": 61122,
+                "p90": 65363,
+                "p95": 70099,
+                "p99": 85049,
+                "p999": 95009
+              },
+              "errors": {
+                "connect": 0,
+                "read": 0,
+                "write": 0,
+                "status": 0,
+                "timeout": 0
+              }
+            }
+          ]
+        },
+        "api_items": {
+          "rps_median": 309.23,
+          "rps_min": 288.66,
+          "rps_max": 312.31,
+          "transfer_mb_s_median": 2.386,
+          "latency_ms": {
+            "mean": 51.412,
+            "p50": 51.411,
+            "p90": 56.592,
+            "p95": 58.791,
+            "p99": 61.955,
+            "max": 78.579
+          },
+          "total_errors_across_runs": 0,
+          "raw_runs": [
+            {
+              "requests": 1881,
+              "duration_us": 6022766,
+              "bytes": 15217764,
+              "rps": 312.31,
+              "transfer_mb_s": 2.41,
+              "latency_us": {
+                "mean": 50910.6,
+                "stdev": 4799.7,
+                "max": 88080,
+                "p50": 50960,
+                "p75": 53704,
+                "p90": 56432,
+                "p95": 58932,
+                "p99": 63209,
+                "p999": 82977
+              },
+              "errors": {
+                "connect": 0,
+                "read": 0,
+                "write": 0,
+                "status": 0,
+                "timeout": 0
+              }
+            },
+            {
+              "requests": 1862,
+              "duration_us": 6021483,
+              "bytes": 15064836,
+              "rps": 309.23,
+              "transfer_mb_s": 2.386,
+              "latency_us": {
+                "mean": 51412.2,
+                "stdev": 4305.1,
+                "max": 78579,
+                "p50": 51411,
+                "p75": 53871,
+                "p90": 56592,
+                "p95": 58791,
+                "p99": 61955,
+                "p999": 74607
+              },
+              "errors": {
+                "connect": 0,
+                "read": 0,
+                "write": 0,
+                "status": 0,
+                "timeout": 0
+              }
+            },
+            {
+              "requests": 1744,
+              "duration_us": 6041627,
+              "bytes": 14113910,
+              "rps": 288.66,
+              "transfer_mb_s": 2.228,
+              "latency_us": {
+                "mean": 54951.6,
+                "stdev": 9712.8,
+                "max": 101752,
+                "p50": 52637,
+                "p75": 57465,
+                "p90": 68237,
+                "p95": 76526,
+                "p99": 90279,
+                "p999": 98776
+              },
+              "errors": {
+                "connect": 0,
+                "read": 0,
+                "write": 0,
+                "status": 0,
+                "timeout": 0
+              }
+            }
+          ]
+        },
+        "api_search": {
+          "rps_median": 315.52,
+          "rps_min": 305.93,
+          "rps_max": 317.43,
+          "transfer_mb_s_median": 0.703,
+          "latency_ms": {
+            "mean": 50.449,
+            "p50": 50.47,
+            "p90": 55.318,
+            "p95": 57.046,
+            "p99": 61.279,
+            "max": 78.096
+          },
+          "total_errors_across_runs": 0,
+          "raw_runs": [
+            {
+              "requests": 1913,
+              "duration_us": 6026473,
+              "bytes": 4468768,
+              "rps": 317.43,
+              "transfer_mb_s": 0.707,
+              "latency_us": {
+                "mean": 50221.4,
+                "stdev": 4168.4,
+                "max": 74896,
+                "p50": 50126,
+                "p75": 52573,
+                "p90": 55163,
+                "p95": 57160,
+                "p99": 61889,
+                "p999": 73739
+              },
+              "errors": {
+                "connect": 0,
+                "read": 0,
+                "write": 0,
+                "status": 0,
+                "timeout": 0
+              }
+            },
+            {
+              "requests": 1898,
+              "duration_us": 6015386,
+              "bytes": 4433728,
+              "rps": 315.52,
+              "transfer_mb_s": 0.703,
+              "latency_us": {
+                "mean": 50449.3,
+                "stdev": 4141.3,
+                "max": 78096,
+                "p50": 50470,
+                "p75": 52780,
+                "p90": 55318,
+                "p95": 57046,
+                "p99": 61279,
+                "p999": 73757
+              },
+              "errors": {
+                "connect": 0,
+                "read": 0,
+                "write": 0,
+                "status": 0,
+                "timeout": 0
+              }
+            },
+            {
+              "requests": 1850,
+              "duration_us": 6047187,
+              "bytes": 4321600,
+              "rps": 305.93,
+              "transfer_mb_s": 0.682,
+              "latency_us": {
+                "mean": 51934.9,
+                "stdev": 6187.3,
+                "max": 89310,
+                "p50": 51053,
+                "p75": 53685,
+                "p90": 57476,
+                "p95": 62727,
+                "p99": 78872,
+                "p999": 87800
+              },
+              "errors": {
+                "connect": 0,
+                "read": 0,
+                "write": 0,
+                "status": 0,
+                "timeout": 0
+              }
+            }
+          ]
+        },
+        "api_health": {
+          "rps_median": 334.18,
+          "rps_min": 256.42,
+          "rps_max": 339.24,
+          "transfer_mb_s_median": 0.257,
+          "latency_ms": {
+            "mean": 47.667,
+            "p50": 47.465,
+            "p90": 51.8,
+            "p95": 53.527,
+            "p99": 61.47,
+            "max": 75.883
+          },
+          "total_errors_across_runs": 0,
+          "raw_runs": [
+            {
+              "requests": 2047,
+              "duration_us": 6034118,
+              "bytes": 1649882,
+              "rps": 339.24,
+              "transfer_mb_s": 0.261,
+              "latency_us": {
+                "mean": 46884.7,
+                "stdev": 5131.6,
+                "max": 79836,
+                "p50": 46290,
+                "p75": 48345,
+                "p90": 50898,
+                "p95": 53114,
+                "p99": 70217,
+                "p999": 77241
+              },
+              "errors": {
+                "connect": 0,
+                "read": 0,
+                "write": 0,
+                "status": 0,
+                "timeout": 0
+              }
+            },
+            {
+              "requests": 1543,
+              "duration_us": 6017359,
+              "bytes": 1243658,
+              "rps": 256.42,
+              "transfer_mb_s": 0.197,
+              "latency_us": {
+                "mean": 62090.5,
+                "stdev": 17534.7,
+                "max": 105077,
+                "p50": 51651,
+                "p75": 79981,
+                "p90": 84226,
+                "p95": 87312,
+                "p99": 93751,
+                "p999": 103460
+              },
+              "errors": {
+                "connect": 0,
+                "read": 0,
+                "write": 0,
+                "status": 0,
+                "timeout": 0
+              }
+            },
+            {
+              "requests": 2010,
+              "duration_us": 6014633,
+              "bytes": 1620060,
+              "rps": 334.18,
+              "transfer_mb_s": 0.257,
+              "latency_us": {
+                "mean": 47667.1,
+                "stdev": 3870.1,
+                "max": 75883,
+                "p50": 47465,
+                "p75": 49273,
+                "p90": 51800,
+                "p95": 53527,
+                "p99": 61470,
+                "p999": 72322
+              },
+              "errors": {
+                "connect": 0,
+                "read": 0,
+                "write": 0,
+                "status": 0,
+                "timeout": 0
+              }
+            }
+          ]
+        },
+        "api_write_patch": {
+          "rps_median": 222.1,
+          "rps_min": 209.52,
+          "rps_max": 222.71,
+          "transfer_mb_s_median": 0.258,
+          "latency_ms": {
+            "mean": 18.077,
+            "p50": 17.847,
+            "p90": 28.035,
+            "p95": 30.964,
+            "p99": 37.813,
+            "max": 76.957
+          },
+          "total_errors_across_runs": 0,
+          "raw_runs": [
+            {
+              "requests": 1117,
+              "duration_us": 5029356,
+              "bytes": 1358272,
+              "rps": 222.1,
+              "transfer_mb_s": 0.258,
+              "latency_us": {
+                "mean": 18077.2,
+                "stdev": 7941.8,
+                "max": 76957,
+                "p50": 17847,
+                "p75": 23227,
+                "p90": 28035,
+                "p95": 30964,
+                "p99": 37813,
+                "p999": 59726
+              },
+              "errors": {
+                "connect": 0,
+                "read": 0,
+                "write": 0,
+                "status": 0,
+                "timeout": 0
+              }
+            },
+            {
+              "requests": 1119,
+              "duration_us": 5024450,
+              "bytes": 1360704,
+              "rps": 222.71,
+              "transfer_mb_s": 0.258,
+              "latency_us": {
+                "mean": 17982.9,
+                "stdev": 7702.5,
+                "max": 47092,
+                "p50": 17675,
+                "p75": 22986,
+                "p90": 28292,
+                "p95": 31419,
+                "p99": 40968,
+                "p999": 45091
+              },
+              "errors": {
+                "connect": 0,
+                "read": 0,
+                "write": 0,
+                "status": 0,
+                "timeout": 0
+              }
+            },
+            {
+              "requests": 1051,
+              "duration_us": 5016217,
+              "bytes": 1278016,
+              "rps": 209.52,
+              "transfer_mb_s": 0.243,
+              "latency_us": {
+                "mean": 19120.9,
+                "stdev": 8614.8,
+                "max": 69011,
+                "p50": 19168,
+                "p75": 25802,
+                "p90": 29828,
+                "p95": 32381,
+                "p99": 39145,
+                "p999": 49866
+              },
+              "errors": {
+                "connect": 0,
+                "read": 0,
+                "write": 0,
+                "status": 0,
+                "timeout": 0
+              }
+            }
+          ]
+        }
+      },
+      "fpm_rss": {
+        "master_kb": 8368,
+        "worker_count": 4,
+        "worker_avg_kb": 32528,
+        "total_pool_kb": 138480,
+        "total_pool_mb": 135.23
+      },
+      "php_probe": {
+        "ssr_home": {
+          "samples": 12,
+          "php_time_us_median": 8364.4,
+          "mem_emalloc_peak_kb_median": 1058.5,
+          "mem_real_peak_kb_median": 2048,
+          "included_files_median": 489,
+          "declared_classes_median": 455
+        },
+        "ssr_folder": {
+          "samples": 12,
+          "php_time_us_median": 7769,
+          "mem_emalloc_peak_kb_median": 980.5,
+          "mem_real_peak_kb_median": 2048,
+          "included_files_median": 489,
+          "declared_classes_median": 455
+        },
+        "api_items": {
+          "samples": 12,
+          "php_time_us_median": 6120.8,
+          "mem_emalloc_peak_kb_median": 834.9,
+          "mem_real_peak_kb_median": 2048,
+          "included_files_median": 454,
+          "declared_classes_median": 449
+        },
+        "api_health": {
+          "samples": 12,
+          "php_time_us_median": 5572.4,
+          "mem_emalloc_peak_kb_median": 795.1,
+          "mem_real_peak_kb_median": 2048,
+          "included_files_median": 453,
+          "declared_classes_median": 448
+        }
+      }
+    },
+    "phalcon": {
+      "static_footprint": {
+        "app_php_files": 15,
+        "app_nonempty_loc": 2652,
+        "vendor_php_files": 0,
+        "vendor_bytes": 0,
+        "vendor_mb": 0,
+        "native_extension_bytes": 69335168,
+        "native_extension_mb": 66.12
+      },
+      "wrk": {
+        "ssr_home": {
+          "rps_median": 642.74,
+          "rps_min": 635.55,
+          "rps_max": 659.24,
+          "transfer_mb_s_median": 48.318,
+          "latency_ms": {
+            "mean": 24.809,
+            "p50": 24.051,
+            "p90": 30.036,
+            "p95": 33.289,
+            "p99": 40.127,
+            "max": 55.937
+          },
+          "total_errors_across_runs": 0,
+          "raw_runs": [
+            {
+              "requests": 3841,
+              "duration_us": 6043541,
+              "bytes": 302772735,
+              "rps": 635.55,
+              "transfer_mb_s": 47.778,
+              "latency_us": {
+                "mean": 25064.6,
+                "stdev": 3858.6,
+                "max": 53320,
+                "p50": 24485,
+                "p75": 27214,
+                "p90": 29900,
+                "p95": 31917,
+                "p99": 37015,
+                "p999": 44039
+              },
+              "errors": {
+                "connect": 0,
+                "read": 0,
+                "write": 0,
+                "status": 0,
+                "timeout": 0
+              }
+            },
+            {
+              "requests": 3966,
+              "duration_us": 6015991,
+              "bytes": 312703142,
+              "rps": 659.24,
+              "transfer_mb_s": 49.571,
+              "latency_us": {
+                "mean": 24200.5,
+                "stdev": 3282,
+                "max": 43478,
+                "p50": 23927,
+                "p75": 26098,
+                "p90": 28098,
+                "p95": 29786,
+                "p99": 34140,
+                "p999": 40780
+              },
+              "errors": {
+                "connect": 0,
+                "read": 0,
+                "write": 0,
+                "status": 0,
+                "timeout": 0
+              }
+            },
+            {
+              "requests": 3877,
+              "duration_us": 6031997,
+              "bytes": 305611500,
+              "rps": 642.74,
+              "transfer_mb_s": 48.318,
+              "latency_us": {
+                "mean": 24809.3,
+                "stdev": 4413.8,
+                "max": 55937,
+                "p50": 24051,
+                "p75": 26878,
+                "p90": 30036,
+                "p95": 33289,
+                "p99": 40127,
+                "p999": 46056
+              },
+              "errors": {
+                "connect": 0,
+                "read": 0,
+                "write": 0,
+                "status": 0,
+                "timeout": 0
+              }
+            }
+          ]
+        },
+        "ssr_folder": {
+          "rps_median": 742.21,
+          "rps_min": 738.84,
+          "rps_max": 745.95,
+          "transfer_mb_s_median": 38.222,
+          "latency_ms": {
+            "mean": 21.498,
+            "p50": 21.218,
+            "p90": 24.916,
+            "p95": 26.258,
+            "p99": 29.478,
+            "max": 39.617
+          },
+          "total_errors_across_runs": 0,
+          "raw_runs": [
+            {
+              "requests": 4449,
+              "duration_us": 6021629,
+              "bytes": 240191019,
+              "rps": 738.84,
+              "transfer_mb_s": 38.04,
+              "latency_us": {
+                "mean": 21591.2,
+                "stdev": 3123.6,
+                "max": 41578,
+                "p50": 21270,
+                "p75": 23213,
+                "p90": 25417,
+                "p95": 26952,
+                "p99": 31346,
+                "p999": 37946
+              },
+              "errors": {
+                "connect": 0,
+                "read": 0,
+                "write": 0,
+                "status": 0,
+                "timeout": 0
+              }
+            },
+            {
+              "requests": 4499,
+              "duration_us": 6031245,
+              "bytes": 242940666,
+              "rps": 745.95,
+              "transfer_mb_s": 38.414,
+              "latency_us": {
+                "mean": 21365.2,
+                "stdev": 2420.6,
+                "max": 34283,
+                "p50": 21219,
+                "p75": 22874,
+                "p90": 24416,
+                "p95": 25535,
+                "p99": 27830,
+                "p999": 29790
+              },
+              "errors": {
+                "connect": 0,
+                "read": 0,
+                "write": 0,
+                "status": 0,
+                "timeout": 0
+              }
+            },
+            {
+              "requests": 4472,
+              "duration_us": 6025277,
+              "bytes": 241483194,
+              "rps": 742.21,
+              "transfer_mb_s": 38.222,
+              "latency_us": {
+                "mean": 21498,
+                "stdev": 2720.5,
+                "max": 39617,
+                "p50": 21218,
+                "p75": 22975,
+                "p90": 24916,
+                "p95": 26258,
+                "p99": 29478,
+                "p999": 34415
+              },
+              "errors": {
+                "connect": 0,
+                "read": 0,
+                "write": 0,
+                "status": 0,
+                "timeout": 0
+              }
+            }
+          ]
+        },
+        "api_items": {
+          "rps_median": 999.6,
+          "rps_min": 998.94,
+          "rps_max": 1006.14,
+          "transfer_mb_s_median": 7.925,
+          "latency_ms": {
+            "mean": 15.958,
+            "p50": 15.74,
+            "p90": 18.863,
+            "p95": 20.213,
+            "p99": 23.339,
+            "max": 30.063
+          },
+          "total_errors_across_runs": 0,
+          "raw_runs": [
+            {
+              "requests": 6010,
+              "duration_us": 6016361,
+              "bytes": 49955120,
+              "rps": 998.94,
+              "transfer_mb_s": 7.919,
+              "latency_us": {
+                "mean": 15994.6,
+                "stdev": 2587.4,
+                "max": 35684,
+                "p50": 15651,
+                "p75": 17254,
+                "p90": 19023,
+                "p95": 20528,
+                "p99": 25219,
+                "p999": 29998
+              },
+              "errors": {
+                "connect": 0,
+                "read": 0,
+                "write": 0,
+                "status": 0,
+                "timeout": 0
+              }
+            },
+            {
+              "requests": 6023,
+              "duration_us": 6025436,
+              "bytes": 50071483,
+              "rps": 999.6,
+              "transfer_mb_s": 7.925,
+              "latency_us": {
+                "mean": 15957.8,
+                "stdev": 2352.7,
+                "max": 30063,
+                "p50": 15740,
+                "p75": 17264,
+                "p90": 18863,
+                "p95": 20213,
+                "p99": 23339,
+                "p999": 26184
+              },
+              "errors": {
+                "connect": 0,
+                "read": 0,
+                "write": 0,
+                "status": 0,
+                "timeout": 0
+              }
+            },
+            {
+              "requests": 6064,
+              "duration_us": 6027009,
+              "bytes": 50403968,
+              "rps": 1006.14,
+              "transfer_mb_s": 7.976,
+              "latency_us": {
+                "mean": 15860.9,
+                "stdev": 2128.7,
+                "max": 28891,
+                "p50": 15695,
+                "p75": 17125,
+                "p90": 18461,
+                "p95": 19478,
+                "p99": 21999,
+                "p999": 25942
+              },
+              "errors": {
+                "connect": 0,
+                "read": 0,
+                "write": 0,
+                "status": 0,
+                "timeout": 0
+              }
+            }
+          ]
+        },
+        "api_search": {
+          "rps_median": 962.48,
+          "rps_min": 954.53,
+          "rps_max": 964.54,
+          "transfer_mb_s_median": 2.35,
+          "latency_ms": {
+            "mean": 16.58,
+            "p50": 16.192,
+            "p90": 19.382,
+            "p95": 21.276,
+            "p99": 26.643,
+            "max": 37.421
+          },
+          "total_errors_across_runs": 0,
+          "raw_runs": [
+            {
+              "requests": 5803,
+              "duration_us": 6016362,
+              "bytes": 14855680,
+              "rps": 964.54,
+              "transfer_mb_s": 2.355,
+              "latency_us": {
+                "mean": 16560.2,
+                "stdev": 2291.2,
+                "max": 29898,
+                "p50": 16371,
+                "p75": 17813,
+                "p90": 19230,
+                "p95": 20364,
+                "p99": 24056,
+                "p999": 27437
+              },
+              "errors": {
+                "connect": 0,
+                "read": 0,
+                "write": 0,
+                "status": 0,
+                "timeout": 0
+              }
+            },
+            {
+              "requests": 5747,
+              "duration_us": 6020780,
+              "bytes": 14714875,
+              "rps": 954.53,
+              "transfer_mb_s": 2.331,
+              "latency_us": {
+                "mean": 16721.3,
+                "stdev": 2822.8,
+                "max": 33033,
+                "p50": 16332,
+                "p75": 17980,
+                "p90": 20038,
+                "p95": 22020,
+                "p99": 26737,
+                "p999": 32196
+              },
+              "errors": {
+                "connect": 0,
+                "read": 0,
+                "write": 0,
+                "status": 0,
+                "timeout": 0
+              }
+            },
+            {
+              "requests": 5800,
+              "duration_us": 6026085,
+              "bytes": 14848000,
+              "rps": 962.48,
+              "transfer_mb_s": 2.35,
+              "latency_us": {
+                "mean": 16580.1,
+                "stdev": 2672,
+                "max": 37421,
+                "p50": 16192,
+                "p75": 17651,
+                "p90": 19382,
+                "p95": 21276,
+                "p99": 26643,
+                "p999": 32378
+              },
+              "errors": {
+                "connect": 0,
+                "read": 0,
+                "write": 0,
+                "status": 0,
+                "timeout": 0
+              }
+            }
+          ]
+        },
+        "api_health": {
+          "rps_median": 1259.64,
+          "rps_min": 992.16,
+          "rps_max": 1275.25,
+          "transfer_mb_s_median": 0.927,
+          "latency_ms": {
+            "mean": 12.67,
+            "p50": 12.373,
+            "p90": 14.565,
+            "p95": 15.739,
+            "p99": 21.484,
+            "max": 26.362
+          },
+          "total_errors_across_runs": 0,
+          "raw_runs": [
+            {
+              "requests": 7680,
+              "duration_us": 6022328,
+              "bytes": 5928960,
+              "rps": 1275.25,
+              "transfer_mb_s": 0.939,
+              "latency_us": {
+                "mean": 12518.8,
+                "stdev": 1593.1,
+                "max": 34704,
+                "p50": 12348,
+                "p75": 13441,
+                "p90": 14533,
+                "p95": 15271,
+                "p99": 16880,
+                "p999": 19045
+              },
+              "errors": {
+                "connect": 0,
+                "read": 0,
+                "write": 0,
+                "status": 0,
+                "timeout": 0
+              }
+            },
+            {
+              "requests": 5976,
+              "duration_us": 6023201,
+              "bytes": 4613472,
+              "rps": 992.16,
+              "transfer_mb_s": 0.73,
+              "latency_us": {
+                "mean": 16107.4,
+                "stdev": 4824.9,
+                "max": 49907,
+                "p50": 14719,
+                "p75": 19486,
+                "p90": 22355,
+                "p95": 24200,
+                "p99": 30397,
+                "p999": 41014
+              },
+              "errors": {
+                "connect": 0,
+                "read": 0,
+                "write": 0,
+                "status": 0,
+                "timeout": 0
+              }
+            },
+            {
+              "requests": 7576,
+              "duration_us": 6014400,
+              "bytes": 5848672,
+              "rps": 1259.64,
+              "transfer_mb_s": 0.927,
+              "latency_us": {
+                "mean": 12670.3,
+                "stdev": 2017.3,
+                "max": 26362,
+                "p50": 12373,
+                "p75": 13350,
+                "p90": 14565,
+                "p95": 15739,
+                "p99": 21484,
+                "p999": 25036
+              },
+              "errors": {
+                "connect": 0,
+                "read": 0,
+                "write": 0,
+                "status": 0,
+                "timeout": 0
+              }
+            }
+          ]
+        },
+        "api_write_patch": {
+          "rps_median": 486,
+          "rps_min": 475.58,
+          "rps_max": 511.69,
+          "transfer_mb_s_median": 0.564,
+          "latency_ms": {
+            "mean": 9.147,
+            "p50": 6.01,
+            "p90": 19.693,
+            "p95": 22.008,
+            "p99": 33.03,
+            "max": 62.551
+          },
+          "total_errors_across_runs": 0,
+          "raw_runs": [
+            {
+              "requests": 2384,
+              "duration_us": 5012862,
+              "bytes": 2898944,
+              "rps": 475.58,
+              "transfer_mb_s": 0.552,
+              "latency_us": {
+                "mean": 9325.1,
+                "stdev": 7675.2,
+                "max": 62218,
+                "p50": 6138,
+                "p75": 13750,
+                "p90": 19397,
+                "p95": 21522,
+                "p99": 38029,
+                "p999": 53808
+              },
+              "errors": {
+                "connect": 0,
+                "read": 0,
+                "write": 0,
+                "status": 0,
+                "timeout": 0
+              }
+            },
+            {
+              "requests": 2438,
+              "duration_us": 5016509,
+              "bytes": 2964608,
+              "rps": 486,
+              "transfer_mb_s": 0.564,
+              "latency_us": {
+                "mean": 9146.8,
+                "stdev": 7426.6,
+                "max": 62551,
+                "p50": 6010,
+                "p75": 13570,
+                "p90": 19693,
+                "p95": 22008,
+                "p99": 33030,
+                "p999": 54314
+              },
+              "errors": {
+                "connect": 0,
+                "read": 0,
+                "write": 0,
+                "status": 0,
+                "timeout": 0
+              }
+            },
+            {
+              "requests": 2566,
+              "duration_us": 5014722,
+              "bytes": 3120256,
+              "rps": 511.69,
+              "transfer_mb_s": 0.593,
+              "latency_us": {
+                "mean": 10027.3,
+                "stdev": 11661,
+                "max": 111441,
+                "p50": 5613,
+                "p75": 13465,
+                "p90": 20707,
+                "p95": 28466,
+                "p99": 67022,
+                "p999": 98832
+              },
+              "errors": {
+                "connect": 0,
+                "read": 0,
+                "write": 0,
+                "status": 0,
+                "timeout": 0
+              }
+            }
+          ]
+        }
+      },
+      "fpm_rss": {
+        "master_kb": 16356,
+        "worker_count": 4,
+        "worker_avg_kb": 32709,
+        "total_pool_kb": 147192,
+        "total_pool_mb": 143.74
+      },
+      "php_probe": {
+        "ssr_home": {
+          "samples": 12,
+          "php_time_us_median": 2447.9,
+          "mem_emalloc_peak_kb_median": 701.5,
+          "mem_real_peak_kb_median": 2048,
+          "included_files_median": 10,
+          "declared_classes_median": 1537
+        },
+        "ssr_folder": {
+          "samples": 12,
+          "php_time_us_median": 2204.3,
+          "mem_emalloc_peak_kb_median": 623.6,
+          "mem_real_peak_kb_median": 2048,
+          "included_files_median": 10,
+          "declared_classes_median": 1537
+        },
+        "api_items": {
+          "samples": 12,
+          "php_time_us_median": 1586.7,
+          "mem_emalloc_peak_kb_median": 513.6,
+          "mem_real_peak_kb_median": 2048,
+          "included_files_median": 5,
+          "declared_classes_median": 1535
+        },
+        "api_health": {
+          "samples": 12,
+          "php_time_us_median": 1204.3,
+          "mem_emalloc_peak_kb_median": 479,
+          "mem_real_peak_kb_median": 2048,
+          "included_files_median": 6,
+          "declared_classes_median": 1536
+        }
+      }
+    },
+    "slim": {
+      "static_footprint": {
+        "app_php_files": 17,
+        "app_nonempty_loc": 2701,
+        "vendor_php_files": 180,
+        "vendor_bytes": 701855,
+        "vendor_mb": 0.67,
+        "native_extension_bytes": 0,
+        "native_extension_mb": 0
+      },
+      "wrk": {
+        "ssr_home": {
+          "rps_median": 759.47,
+          "rps_min": 747.1,
+          "rps_max": 760.91,
+          "transfer_mb_s_median": 56.926,
+          "latency_ms": {
+            "mean": 20.975,
+            "p50": 20.646,
+            "p90": 24.674,
+            "p95": 25.987,
+            "p99": 29.438,
+            "max": 38.264
+          },
+          "total_errors_across_runs": 0,
+          "raw_runs": [
+            {
+              "requests": 4579,
+              "duration_us": 6029241,
+              "bytes": 359893301,
+              "rps": 759.47,
+              "transfer_mb_s": 56.926,
+              "latency_us": {
+                "mean": 20975,
+                "stdev": 2909.9,
+                "max": 38264,
+                "p50": 20646,
+                "p75": 22627,
+                "p90": 24674,
+                "p95": 25987,
+                "p99": 29438,
+                "p999": 33974
+              },
+              "errors": {
+                "connect": 0,
+                "read": 0,
+                "write": 0,
+                "status": 0,
+                "timeout": 0
+              }
+            },
+            {
+              "requests": 4501,
+              "duration_us": 6024633,
+              "bytes": 353611241,
+              "rps": 747.1,
+              "transfer_mb_s": 55.975,
+              "latency_us": {
+                "mean": 21341.7,
+                "stdev": 3630.9,
+                "max": 41331,
+                "p50": 20763,
+                "p75": 22852,
+                "p90": 25493,
+                "p95": 28224,
+                "p99": 34113,
+                "p999": 39476
+              },
+              "errors": {
+                "connect": 0,
+                "read": 0,
+                "write": 0,
+                "status": 0,
+                "timeout": 0
+              }
+            },
+            {
+              "requests": 4585,
+              "duration_us": 6025668,
+              "bytes": 360215942,
+              "rps": 760.91,
+              "transfer_mb_s": 57.011,
+              "latency_us": {
+                "mean": 20969.6,
+                "stdev": 2938,
+                "max": 38563,
+                "p50": 20631,
+                "p75": 22436,
+                "p90": 24334,
+                "p95": 25955,
+                "p99": 30946,
+                "p999": 36306
+              },
+              "errors": {
+                "connect": 0,
+                "read": 0,
+                "write": 0,
+                "status": 0,
+                "timeout": 0
+              }
+            }
+          ]
+        },
+        "ssr_folder": {
+          "rps_median": 876.16,
+          "rps_min": 871.54,
+          "rps_max": 882.95,
+          "transfer_mb_s_median": 44.903,
+          "latency_ms": {
+            "mean": 18.217,
+            "p50": 17.909,
+            "p90": 21.65,
+            "p95": 22.954,
+            "p99": 26.379,
+            "max": 34.342
+          },
+          "total_errors_across_runs": 0,
+          "raw_runs": [
+            {
+              "requests": 5249,
+              "duration_us": 6022687,
+              "bytes": 282036266,
+              "rps": 871.54,
+              "transfer_mb_s": 44.66,
+              "latency_us": {
+                "mean": 18308.7,
+                "stdev": 2906.5,
+                "max": 38337,
+                "p50": 17918,
+                "p75": 19737,
+                "p90": 21854,
+                "p95": 23524,
+                "p99": 28004,
+                "p999": 32720
+              },
+              "errors": {
+                "connect": 0,
+                "read": 0,
+                "write": 0,
+                "status": 0,
+                "timeout": 0
+              }
+            },
+            {
+              "requests": 5275,
+              "duration_us": 6020612,
+              "bytes": 283476961,
+              "rps": 876.16,
+              "transfer_mb_s": 44.903,
+              "latency_us": {
+                "mean": 18216.9,
+                "stdev": 2692.1,
+                "max": 34342,
+                "p50": 17909,
+                "p75": 19688,
+                "p90": 21650,
+                "p95": 22954,
+                "p99": 26379,
+                "p999": 31135
+              },
+              "errors": {
+                "connect": 0,
+                "read": 0,
+                "write": 0,
+                "status": 0,
+                "timeout": 0
+              }
+            },
+            {
+              "requests": 5312,
+              "duration_us": 6016167,
+              "bytes": 285422435,
+              "rps": 882.95,
+              "transfer_mb_s": 45.245,
+              "latency_us": {
+                "mean": 18072.7,
+                "stdev": 2553.1,
+                "max": 33575,
+                "p50": 17768,
+                "p75": 19567,
+                "p90": 21334,
+                "p95": 22564,
+                "p99": 25843,
+                "p999": 29912
+              },
+              "errors": {
+                "connect": 0,
+                "read": 0,
+                "write": 0,
+                "status": 0,
+                "timeout": 0
+              }
+            }
+          ]
+        },
+        "api_items": {
+          "rps_median": 1205.77,
+          "rps_min": 1204.02,
+          "rps_max": 1209.16,
+          "transfer_mb_s_median": 9.299,
+          "latency_ms": {
+            "mean": 13.238,
+            "p50": 13.058,
+            "p90": 15.331,
+            "p95": 16.155,
+            "p99": 18.47,
+            "max": 24.74
+          },
+          "total_errors_across_runs": 0,
+          "raw_runs": [
+            {
+              "requests": 7275,
+              "duration_us": 6016569,
+              "bytes": 58829859,
+              "rps": 1209.16,
+              "transfer_mb_s": 9.325,
+              "latency_us": {
+                "mean": 13197.1,
+                "stdev": 1668.4,
+                "max": 23148,
+                "p50": 13030,
+                "p75": 14129,
+                "p90": 15333,
+                "p95": 16135,
+                "p99": 18039,
+                "p999": 20761
+              },
+              "errors": {
+                "connect": 0,
+                "read": 0,
+                "write": 0,
+                "status": 0,
+                "timeout": 0
+              }
+            },
+            {
+              "requests": 7254,
+              "duration_us": 6016078,
+              "bytes": 58659984,
+              "rps": 1205.77,
+              "transfer_mb_s": 9.299,
+              "latency_us": {
+                "mean": 13238,
+                "stdev": 1697.3,
+                "max": 24740,
+                "p50": 13058,
+                "p75": 14187,
+                "p90": 15331,
+                "p95": 16155,
+                "p99": 18470,
+                "p999": 21725
+              },
+              "errors": {
+                "connect": 0,
+                "read": 0,
+                "write": 0,
+                "status": 0,
+                "timeout": 0
+              }
+            },
+            {
+              "requests": 7256,
+              "duration_us": 6026469,
+              "bytes": 58684458,
+              "rps": 1204.02,
+              "transfer_mb_s": 9.287,
+              "latency_us": {
+                "mean": 13254.2,
+                "stdev": 1699.2,
+                "max": 25228,
+                "p50": 13094,
+                "p75": 14183,
+                "p90": 15439,
+                "p95": 16210,
+                "p99": 18238,
+                "p999": 21156
+              },
+              "errors": {
+                "connect": 0,
+                "read": 0,
+                "write": 0,
+                "status": 0,
+                "timeout": 0
+              }
+            }
+          ]
+        },
+        "api_search": {
+          "rps_median": 1198.61,
+          "rps_min": 1183.78,
+          "rps_max": 1207.82,
+          "transfer_mb_s_median": 2.667,
+          "latency_ms": {
+            "mean": 13.325,
+            "p50": 13.118,
+            "p90": 15.483,
+            "p95": 16.383,
+            "p99": 18.805,
+            "max": 25.121
+          },
+          "total_errors_across_runs": 0,
+          "raw_runs": [
+            {
+              "requests": 7129,
+              "duration_us": 6022243,
+              "bytes": 16631957,
+              "rps": 1183.78,
+              "transfer_mb_s": 2.634,
+              "latency_us": {
+                "mean": 13492.7,
+                "stdev": 2002.4,
+                "max": 44542,
+                "p50": 13193,
+                "p75": 14380,
+                "p90": 15751,
+                "p95": 16936,
+                "p99": 20510,
+                "p999": 25209
+              },
+              "errors": {
+                "connect": 0,
+                "read": 0,
+                "write": 0,
+                "status": 0,
+                "timeout": 0
+              }
+            },
+            {
+              "requests": 7209,
+              "duration_us": 6014485,
+              "bytes": 16818597,
+              "rps": 1198.61,
+              "transfer_mb_s": 2.667,
+              "latency_us": {
+                "mean": 13324.8,
+                "stdev": 1773.3,
+                "max": 25121,
+                "p50": 13118,
+                "p75": 14251,
+                "p90": 15483,
+                "p95": 16383,
+                "p99": 18805,
+                "p999": 22143
+              },
+              "errors": {
+                "connect": 0,
+                "read": 0,
+                "write": 0,
+                "status": 0,
+                "timeout": 0
+              }
+            },
+            {
+              "requests": 7266,
+              "duration_us": 6015807,
+              "bytes": 16951578,
+              "rps": 1207.82,
+              "transfer_mb_s": 2.687,
+              "latency_us": {
+                "mean": 13218.2,
+                "stdev": 1710.2,
+                "max": 22804,
+                "p50": 12978,
+                "p75": 14187,
+                "p90": 15491,
+                "p95": 16256,
+                "p99": 18038,
+                "p999": 21330
+              },
+              "errors": {
+                "connect": 0,
+                "read": 0,
+                "write": 0,
+                "status": 0,
+                "timeout": 0
+              }
+            }
+          ]
+        },
+        "api_health": {
+          "rps_median": 1508.96,
+          "rps_min": 1336.57,
+          "rps_max": 1595.04,
+          "transfer_mb_s_median": 1.102,
+          "latency_ms": {
+            "mean": 10.579,
+            "p50": 9.795,
+            "p90": 14.857,
+            "p95": 16.545,
+            "p99": 18.918,
+            "max": 26.3
+          },
+          "total_errors_across_runs": 0,
+          "raw_runs": [
+            {
+              "requests": 9594,
+              "duration_us": 6014882,
+              "bytes": 7349004,
+              "rps": 1595.04,
+              "transfer_mb_s": 1.165,
+              "latency_us": {
+                "mean": 10013.5,
+                "stdev": 1777,
+                "max": 23881,
+                "p50": 9677,
+                "p75": 10764,
+                "p90": 12223,
+                "p95": 13423,
+                "p99": 16194,
+                "p999": 19865
+              },
+              "errors": {
+                "connect": 0,
+                "read": 0,
+                "write": 0,
+                "status": 0,
+                "timeout": 0
+              }
+            },
+            {
+              "requests": 8043,
+              "duration_us": 6017636,
+              "bytes": 6160938,
+              "rps": 1336.57,
+              "transfer_mb_s": 0.976,
+              "latency_us": {
+                "mean": 11943.9,
+                "stdev": 3181.7,
+                "max": 24986,
+                "p50": 10884,
+                "p75": 14376,
+                "p90": 16665,
+                "p95": 17801,
+                "p99": 20017,
+                "p999": 22301
+              },
+              "errors": {
+                "connect": 0,
+                "read": 0,
+                "write": 0,
+                "status": 0,
+                "timeout": 0
+              }
+            },
+            {
+              "requests": 9086,
+              "duration_us": 6021354,
+              "bytes": 6959876,
+              "rps": 1508.96,
+              "transfer_mb_s": 1.102,
+              "latency_us": {
+                "mean": 10579.2,
+                "stdev": 2602.7,
+                "max": 26300,
+                "p50": 9795,
+                "p75": 11161,
+                "p90": 14857,
+                "p95": 16545,
+                "p99": 18918,
+                "p999": 21193
+              },
+              "errors": {
+                "connect": 0,
+                "read": 0,
+                "write": 0,
+                "status": 0,
+                "timeout": 0
+              }
+            }
+          ]
+        },
+        "api_write_patch": {
+          "rps_median": 578.08,
+          "rps_min": 565.47,
+          "rps_max": 592,
+          "transfer_mb_s_median": 0.669,
+          "latency_ms": {
+            "mean": 9.174,
+            "p50": 4.809,
+            "p90": 20.225,
+            "p95": 29.24,
+            "p99": 51.574,
+            "max": 90.031
+          },
+          "total_errors_across_runs": 0,
+          "raw_runs": [
+            {
+              "requests": 2967,
+              "duration_us": 5011817,
+              "bytes": 3598971,
+              "rps": 592,
+              "transfer_mb_s": 0.685,
+              "latency_us": {
+                "mean": 8808.5,
+                "stdev": 9740.8,
+                "max": 87130,
+                "p50": 4743,
+                "p75": 12646,
+                "p90": 19708,
+                "p95": 26144,
+                "p99": 46305,
+                "p999": 80367
+              },
+              "errors": {
+                "connect": 0,
+                "read": 0,
+                "write": 0,
+                "status": 0,
+                "timeout": 0
+              }
+            },
+            {
+              "requests": 2895,
+              "duration_us": 5007953,
+              "bytes": 3511635,
+              "rps": 578.08,
+              "transfer_mb_s": 0.669,
+              "latency_us": {
+                "mean": 9173.7,
+                "stdev": 10379,
+                "max": 90031,
+                "p50": 4809,
+                "p75": 13135,
+                "p90": 20225,
+                "p95": 29240,
+                "p99": 51574,
+                "p999": 82925
+              },
+              "errors": {
+                "connect": 0,
+                "read": 0,
+                "write": 0,
+                "status": 0,
+                "timeout": 0
+              }
+            },
+            {
+              "requests": 2834,
+              "duration_us": 5011728,
+              "bytes": 3437642,
+              "rps": 565.47,
+              "transfer_mb_s": 0.654,
+              "latency_us": {
+                "mean": 9950.4,
+                "stdev": 12007.6,
+                "max": 91293,
+                "p50": 4490,
+                "p75": 13660,
+                "p90": 22515,
+                "p95": 31997,
+                "p99": 62981,
+                "p999": 88965
+              },
+              "errors": {
+                "connect": 0,
+                "read": 0,
+                "write": 0,
+                "status": 0,
+                "timeout": 0
+              }
+            }
+          ]
+        }
+      },
+      "fpm_rss": {
+        "master_kb": 8228,
+        "worker_count": 4,
+        "worker_avg_kb": 19907,
+        "total_pool_kb": 87856,
+        "total_pool_mb": 85.8
+      },
+      "php_probe": {
+        "ssr_home": {
+          "samples": 12,
+          "php_time_us_median": 1986.6,
+          "mem_emalloc_peak_kb_median": 646.2,
+          "mem_real_peak_kb_median": 2048,
+          "included_files_median": 92,
+          "declared_classes_median": 278
+        },
+        "ssr_folder": {
+          "samples": 12,
+          "php_time_us_median": 1804.1,
+          "mem_emalloc_peak_kb_median": 567.9,
+          "mem_real_peak_kb_median": 2048,
+          "included_files_median": 92,
+          "declared_classes_median": 278
+        },
+        "api_items": {
+          "samples": 12,
+          "php_time_us_median": 1299.3,
+          "mem_emalloc_peak_kb_median": 462.4,
+          "mem_real_peak_kb_median": 2048,
+          "included_files_median": 86,
+          "declared_classes_median": 275
+        },
+        "api_health": {
+          "samples": 12,
+          "php_time_us_median": 909,
+          "mem_emalloc_peak_kb_median": 420.1,
+          "mem_real_peak_kb_median": 2048,
+          "included_files_median": 87,
+          "declared_classes_median": 276
+        }
+      }
+    }
+  }
+}
