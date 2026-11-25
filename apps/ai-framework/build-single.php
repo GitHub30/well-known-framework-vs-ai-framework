@@ -3,13 +3,20 @@
 declare(strict_types=1);
 
 /**
- * Single-File Bundler for CloudDrive (AI Custom Framework).
+ * Single-File Bundler for CloudDrive (AI Custom Framework — Rental Server Edition).
  *
  * Compiles the entire zero-dependency CloudDrive PHP application, HTML templates,
  * SQLite schema & deterministic 71-item seeder, CSS, JS, Service Worker, PWA icons,
- * and screenshots into ONE standalone file (`dist/index.php`) that can be uploaded
- * directly to any shared hosting / rental server (Xserver, Sakura, Lolipop, ConoHa WING,
- * MixHost, etc.) with zero Composer, zero vendor/, and zero manual setup.
+ * and screenshots into ONE standalone file (`dist/index.php`).
+ *
+ * Key Rental-Server Design:
+ *   - Uses the EXACT SAME directory as `index.php` (`__DIR__`) as the data/uploads area so
+ *     uploaded media/documents (`cd-<hex>.mp4`, `.mp3`, `.pdf`, `.png`, etc.) are served
+ *     directly by Apache / LiteSpeed / Nginx with native HTTP 206 Partial Content (Range).
+ *   - Internal state files (`.clouddrive.sqlite`, `.clouddrive.secret`, `.clouddrive.lock`),
+ *     trashed files (`.trashed-*`), and unsafe/executable uploads (`.blob`) are strictly
+ *     blocked from direct web access via both `.htaccess` and PHP 403 guards (zero RCE/XSS).
+ *   - PHP's Response::file() and direct-file fallback also implement RFC 9110 Range (206/416).
  *
  * Usage:
  *   php apps/ai-framework/build-single.php [output_path]
@@ -35,7 +42,6 @@ function wrapNamespacedFile(string $filePath, ?callable $transform = null): stri
     if ($transform !== null) {
         $code = $transform($code);
     }
-    // Strip opening <?php and declare(strict_types=1);
     $code = preg_replace('/^\s*<\?php\s*/', '', $code, 1) ?? $code;
     $code = preg_replace('/^\s*declare\s*\(\s*strict_types\s*=\s*1\s*\)\s*;\s*/', '', $code, 1) ?? $code;
 
@@ -51,15 +57,16 @@ function wrapNamespacedFile(string $filePath, ?callable $transform = null): stri
 /**
  * Compiles an HTML/PHP template into a static method body inside AiFramework\EmbeddedTemplates.
  */
-function compileTemplateMethod(string $name, string $filePath): string
+function compileTemplateMethod(string $name, string $filePath, ?callable $transform = null): string
 {
     $tpl = file_get_contents($filePath);
     if ($tpl === false) {
         throw new RuntimeException("Failed to read template {$filePath}");
     }
-    // Remove `use App\Services\UiHelper;` because it is hoisted to the namespace header
+    if ($transform !== null) {
+        $tpl = $transform($tpl);
+    }
     $tpl = preg_replace('/^\s*use\s+App\\\\Services\\\\UiHelper;\s*\R?/m', '', $tpl) ?? $tpl;
-    // Ensure template closes cleanly back into PHP mode
     $tplTrimmed = rtrim($tpl);
 
     return <<<PHP
@@ -80,29 +87,143 @@ function compileTemplateMethod(string $name, string $filePath): string
 PHP;
 }
 
+// Enhance drive-ui.js for the single-file direct-download + video/audio partial streaming edition
+function transformDriveUiJs(string $js): string
+{
+    // 1. Update openPreview() to support direct_url downloads & <video>/<audio> streaming
+    $oldPreview = <<<'JS'
+    previewTitle.textContent = item.name;
+    previewDownloadLink.href = `/api/files/${item.id}/download`;
+    previewBody.innerHTML = '<p style="color:#ffffff">読み込み中...</p>';
+    previewBackdrop.classList.add('open');
+
+    const mime = (item.mime_type || '').toLowerCase();
+    const previewUrl = `/api/files/${item.id}/preview`;
+
+    if (INLINE_IMAGE_MIMES.has(mime)) {
+      const img = document.createElement('img');
+      img.className = 'preview-img';
+      img.src = previewUrl;
+      img.alt = item.name;
+      previewBody.replaceChildren(img);
+      return;
+    }
+    if (mime === 'application/pdf') {
+      const iframe = document.createElement('iframe');
+      iframe.className = 'preview-pdf';
+      iframe.src = previewUrl;
+      iframe.title = item.name;
+      previewBody.replaceChildren(iframe);
+      return;
+    }
+JS;
+    $newPreview = <<<'JS'
+    const directUrl = item.direct_url || null;
+    const downloadHref = directUrl || `/api/files/${item.id}/download`;
+    previewTitle.textContent = item.name;
+    previewDownloadLink.href = downloadHref;
+    previewDownloadLink.setAttribute('download', item.name);
+    previewBody.innerHTML = '<p style="color:#ffffff">読み込み中...</p>';
+    previewBackdrop.classList.add('open');
+
+    const mime = (item.mime_type || '').toLowerCase();
+    const ext = (item.extension || '').toLowerCase();
+    const previewUrl = `/api/files/${item.id}/preview`;
+    const mediaSrc = directUrl || previewUrl;
+
+    if (INLINE_IMAGE_MIMES.has(mime)) {
+      const img = document.createElement('img');
+      img.className = 'preview-img';
+      img.src = mediaSrc;
+      img.alt = item.name;
+      previewBody.replaceChildren(img);
+      return;
+    }
+    if (mime.startsWith('video/') || ['mp4', 'm4v', 'webm', 'mov', 'ogv'].includes(ext)) {
+      const video = document.createElement('video');
+      video.controls = true;
+      video.playsInline = true;
+      video.preload = 'metadata';
+      video.src = mediaSrc;
+      video.style.cssText = 'max-width:100%;max-height:78vh;border-radius:12px;background:#000';
+      previewBody.replaceChildren(video);
+      return;
+    }
+    if (mime.startsWith('audio/') || ['mp3', 'm4a', 'ogg', 'wav', 'flac', 'aac'].includes(ext)) {
+      const audio = document.createElement('audio');
+      audio.controls = true;
+      audio.preload = 'metadata';
+      audio.src = mediaSrc;
+      audio.style.cssText = 'width:min(560px,90vw)';
+      previewBody.replaceChildren(audio);
+      return;
+    }
+    if (mime === 'application/pdf') {
+      const iframe = document.createElement('iframe');
+      iframe.className = 'preview-pdf';
+      iframe.src = mediaSrc;
+      iframe.title = item.name;
+      previewBody.replaceChildren(iframe);
+      return;
+    }
+JS;
+    if (!str_contains($js, $oldPreview)) {
+        throw new RuntimeException('Failed to patch openPreview in drive-ui.js');
+    }
+    $js = str_replace($oldPreview, $newPreview, $js);
+
+    // 2. Context menu download link -> direct_url with download attribute (native Range / partial download!)
+    $oldMenuDl = '${isFolder ? \'\' : `<a class="menu-item" href="/api/files/${item.id}/download">ダウンロード</a>`}';
+    $newMenuDl = '${isFolder ? \'\' : `<a class="menu-item" href="${esc(item.direct_url || \'/api/files/\' + item.id + \'/download\')}" download="${esc(item.name)}">ダウンロード</a>`}';
+    if (!str_contains($js, $oldMenuDl)) {
+        throw new RuntimeException('Failed to patch itemMenu download link in drive-ui.js');
+    }
+    $js = str_replace($oldMenuDl, $newMenuDl, $js);
+
+    // 3. Selection bar download button -> trigger direct download preserving original filename
+    $oldSelDl = 'if (selDownloadBtn) selDownloadBtn.addEventListener(\'click\', () => { const it = getSelectedItem(); if (it) window.location.href = `/api/files/${it.id}/download`; });';
+    $newSelDl = 'if (selDownloadBtn) selDownloadBtn.addEventListener(\'click\', () => { const it = getSelectedItem(); if (!it) return; const a = document.createElement(\'a\'); a.href = it.direct_url || `/api/files/${it.id}/download`; a.download = it.name; document.body.appendChild(a); a.click(); a.remove(); });';
+    if (!str_contains($js, $oldSelDl)) {
+        throw new RuntimeException('Failed to patch selDownloadBtn in drive-ui.js');
+    }
+    $js = str_replace($oldSelDl, $newSelDl, $js);
+
+    // 4. Show direct partial-download URL in details side panel when available
+    $oldDetailShare = '<dt>共有</dt><dd>${Number(item.is_shared) === 1 ? \'リンクを知っている全員が閲覧可\' : \'非公開\'}</dd>';
+    $newDetailShare = '<dt>共有</dt><dd>${Number(item.is_shared) === 1 ? \'リンクを知っている全員が閲覧可\' : \'非公開\'}</dd>${item.direct_url ? `<dt>直接URL</dt><dd><a href="${esc(item.direct_url)}" download="${esc(item.name)}">${esc(item.direct_url)}</a></dd>` : \'\'}';
+    if (str_contains($js, $oldDetailShare)) {
+        $js = str_replace($oldDetailShare, $newDetailShare, $js);
+    }
+
+    return $js;
+}
+
 // 1. Collect binary static assets to append after __HALT_COMPILER();
 $assetSpecs = [
-    '/sw.js' => [$sharedRoot . '/public/sw.js', 'application/javascript; charset=utf-8', 'no-cache'],
-    '/assets/app.js' => [$sharedRoot . '/public/assets/app.js', 'application/javascript; charset=utf-8', 'public, max-age=31536000, immutable'],
-    '/assets/drive-ui.js' => [$sharedRoot . '/public/assets/drive-ui.js', 'application/javascript; charset=utf-8', 'public, max-age=31536000, immutable'],
-    '/assets/app.css' => [$sharedRoot . '/public/assets/app.css', 'text/css; charset=utf-8', 'public, max-age=31536000, immutable'],
-    '/assets/app.min.css' => [$sharedRoot . '/public/assets/app.min.css', 'text/css; charset=utf-8', 'public, max-age=31536000, immutable'],
-    '/assets/favicon.svg' => [$sharedRoot . '/public/assets/favicon.svg', 'image/svg+xml; charset=utf-8', 'public, max-age=31536000, immutable'],
-    '/assets/icon-192.png' => [$sharedRoot . '/public/assets/icon-192.png', 'image/png', 'public, max-age=31536000, immutable'],
-    '/assets/icon-maskable-192.png' => [$sharedRoot . '/public/assets/icon-maskable-192.png', 'image/png', 'public, max-age=31536000, immutable'],
-    '/assets/icon-512.png' => [$sharedRoot . '/public/assets/icon-512.png', 'image/png', 'public, max-age=31536000, immutable'],
-    '/assets/icon-maskable-512.png' => [$sharedRoot . '/public/assets/icon-maskable-512.png', 'image/png', 'public, max-age=31536000, immutable'],
-    '/assets/og-image.png' => [$sharedRoot . '/public/assets/og-image.png', 'image/png', 'public, max-age=31536000, immutable'],
-    '/assets/screenshot-desktop.png' => [$sharedRoot . '/public/assets/screenshot-desktop.png', 'image/png', 'public, max-age=31536000, immutable'],
-    '/assets/screenshot-mobile.png' => [$sharedRoot . '/public/assets/screenshot-mobile.png', 'image/png', 'public, max-age=31536000, immutable'],
+    '/sw.js' => [$sharedRoot . '/public/sw.js', 'application/javascript; charset=utf-8', 'no-cache', null],
+    '/assets/app.js' => [$sharedRoot . '/public/assets/app.js', 'application/javascript; charset=utf-8', 'public, max-age=31536000, immutable', null],
+    '/assets/drive-ui.js' => [$sharedRoot . '/public/assets/drive-ui.js', 'application/javascript; charset=utf-8', 'public, max-age=31536000, immutable', 'transformDriveUiJs'],
+    '/assets/app.css' => [$sharedRoot . '/public/assets/app.css', 'text/css; charset=utf-8', 'public, max-age=31536000, immutable', null],
+    '/assets/app.min.css' => [$sharedRoot . '/public/assets/app.min.css', 'text/css; charset=utf-8', 'public, max-age=31536000, immutable', null],
+    '/assets/favicon.svg' => [$sharedRoot . '/public/assets/favicon.svg', 'image/svg+xml; charset=utf-8', 'public, max-age=31536000, immutable', null],
+    '/assets/icon-192.png' => [$sharedRoot . '/public/assets/icon-192.png', 'image/png', 'public, max-age=31536000, immutable', null],
+    '/assets/icon-maskable-192.png' => [$sharedRoot . '/public/assets/icon-maskable-192.png', 'image/png', 'public, max-age=31536000, immutable', null],
+    '/assets/icon-512.png' => [$sharedRoot . '/public/assets/icon-512.png', 'image/png', 'public, max-age=31536000, immutable', null],
+    '/assets/icon-maskable-512.png' => [$sharedRoot . '/public/assets/icon-maskable-512.png', 'image/png', 'public, max-age=31536000, immutable', null],
+    '/assets/og-image.png' => [$sharedRoot . '/public/assets/og-image.png', 'image/png', 'public, max-age=31536000, immutable', null],
+    '/assets/screenshot-desktop.png' => [$sharedRoot . '/public/assets/screenshot-desktop.png', 'image/png', 'public, max-age=31536000, immutable', null],
+    '/assets/screenshot-mobile.png' => [$sharedRoot . '/public/assets/screenshot-mobile.png', 'image/png', 'public, max-age=31536000, immutable', null],
 ];
 
 $binaryPayload = '';
 $manifest = [];
-foreach ($assetSpecs as $route => [$filePath, $mime, $cacheControl]) {
+foreach ($assetSpecs as $route => [$filePath, $mime, $cacheControl, $fn]) {
     $bytes = file_get_contents($filePath);
     if ($bytes === false) {
         throw new RuntimeException("Missing asset: {$filePath}");
+    }
+    if ($fn !== null) {
+        $bytes = $fn($bytes);
     }
     $len = strlen($bytes);
     $manifest[$route] = [
@@ -129,17 +250,21 @@ $rawSeed = file_get_contents($sharedRoot . '/database/seed.php');
 if ($rawSeed === false) {
     throw new RuntimeException('Missing shared/database/seed.php');
 }
-// Extract everything from `$insertItem = $pdo->prepare(` through `$pdo->commit();`
 $seedStart = strpos($rawSeed, '$insertItem = $pdo->prepare(');
 $seedEnd = strpos($rawSeed, '$pdo->commit();');
 if ($seedStart === false || $seedEnd === false) {
     throw new RuntimeException('Could not locate seed body markers in shared/database/seed.php');
 }
 $seedBody = substr($rawSeed, $seedStart, ($seedEnd + strlen('$pdo->commit();')) - $seedStart);
-// Rewrite calls to helper functions into self:: methods
 $seedBody = str_replace(
     ['createSamplePng(', 'createSamplePdf('],
     ['self::createSamplePng(', 'self::createSamplePdf('],
+    $seedBody
+);
+// Prefix seeded trashed items with `.trashed-` so trashed files are blocked from direct HTTP access
+$seedBody = str_replace(
+    ["'storage' => 'seed-trash-logo.txt'", "'storage' => 'seed-trash-test.csv'", "'storage' => 'seed-trash-draft.md'"],
+    ["'storage' => '.trashed-seed-trash-logo.txt'", "'storage' => '.trashed-seed-trash-test.csv'", "'storage' => '.trashed-seed-trash-draft.md'"],
     $seedBody
 );
 
@@ -156,35 +281,27 @@ declare(strict_types=1);
  * Upload this single file as `index.php` to any PHP 8.3 shared hosting / rental server
  * (Xserver, Sakura, Lolipop, ConoHa WING, MixHost, Nginx, Apache, LiteSpeed, or `php -S`).
  *
- * First-request auto-provisioning:
- *   - Creates `.clouddrive_data/` (0700) protected by deny-all `.htaccess` + dotfile 403 guard
- *   - Generates a random 256-bit CSRF HMAC secret in `.clouddrive_data/.app_secret` (0600)
- *   - Initializes SQLite WAL database & seeds 71 sample items (set CLOUDDRIVE_SKIP_SEED=1 for empty)
- *   - On Apache/LiteSpeed, auto-creates rental-server-safe `.htaccess` if none exists
- *   - Serves all CSS, JS, Service Worker, PWA icons, and screenshots directly from this file
+ * Storage Layout (same directory as `index.php` for native direct partial downloads):
+ *   - Uploaded safe media/documents (mp4, webm, mov, mp3, pdf, png, jpg, zip, etc.) are saved
+ *     directly alongside `index.php` as `cd-<hex>.<ext>` so Apache/LiteSpeed/Nginx serves them
+ *     directly with native HTTP 206 Partial Content (Accept-Ranges: bytes) seeking/resuming.
+ *   - Potentially executable or active-content uploads (.php, .phtml, .html, .svg, .js, etc.)
+ *     are isolated as `cd-<hex>.blob` and blocked from direct HTTP access (zero RCE/XSS).
+ *   - Internal state files (`.clouddrive.sqlite`, `.clouddrive.secret`, `.clouddrive.lock`)
+ *     and trashed files (`.trashed-*`) are blocked with 403 via both `.htaccess` and PHP.
+ *   - PHP's Response::file() and direct-file fallback also implement RFC 9110 Range (206/416).
  *
  * Optional Environment Variables:
- *   APP_SECRET            Override CSRF HMAC secret (>= 32 bytes)
- *   APP_URL               Fixed canonical origin URL (e.g. https://drive.example.com)
- *   CLOUDDRIVE_DATA_DIR   Custom writable data directory outside document root
- *   CLOUDDRIVE_SKIP_SEED  Set to "1" to initialize an empty Drive instead of 71 demo items
+ *   APP_SECRET             Override CSRF HMAC secret (>= 32 bytes)
+ *   APP_URL                Fixed canonical origin URL (e.g. https://drive.example.com)
+ *   CLOUDDRIVE_DATA_DIR    Override data/uploads directory (default: same dir as index.php)
+ *   CLOUDDRIVE_MAX_UPLOAD_MB Override max upload size in MB (default: 200)
+ *   CLOUDDRIVE_SKIP_SEED   Set to "1" to initialize an empty Drive instead of 71 demo items
  *   CLOUDDRIVE_NO_HTACCESS Set to "1" to disable automatic Apache/LiteSpeed `.htaccess` creation
  */
 
 
 PHP;
-
-// Framework core classes
-$frameworkFiles = [
-    'Container.php',
-    'Database.php',
-    'HttpException.php',
-    'MiddlewareInterface.php',
-    'Response.php',
-    'Router.php',
-    'Security.php',
-    'Application.php',
-];
 
 // Request.php with rental-server proxy HTTPS & safe RFC host fallback when APP_URL is unset
 $parts[] = wrapNamespacedFile($appRoot . '/framework/Request.php', static function (string $code): string {
@@ -232,20 +349,210 @@ PHP;
     }
 PHP;
     if (!str_contains($code, $oldHttpsAndBase)) {
-        throw new RuntimeException('Failed to patch Request.php for rental-server baseUrl/HTTPS');
+        throw new RuntimeException('Failed to patch Request.php');
     }
     return str_replace($oldHttpsAndBase, $newHttpsAndBase, $code);
 });
 
-foreach ($frameworkFiles as $f) {
+// Response.php upgraded with full RFC 9110 HTTP Range (206 Partial Content / 416) chunked streaming
+$parts[] = wrapNamespacedFile($appRoot . '/framework/Response.php', static function (string $code): string {
+    $oldSend = <<<'PHP'
+    public function send(bool $isHead = false): void
+    {
+        http_response_code($this->status);
+        foreach ($this->headers as $name => $value) {
+            header($name . ': ' . $value, true);
+        }
+        foreach ($this->cookies as $c) {
+            setcookie($c['name'], $c['value'], $c['options']);
+        }
+        if ($isHead) {
+            return;
+        }
+        if ($this->filePath !== null) {
+            readfile($this->filePath);
+            return;
+        }
+        echo $this->body;
+    }
+PHP;
+    $newSend = <<<'PHP'
+    public function send(bool $isHead = false): void
+    {
+        if ($this->filePath !== null && is_file($this->filePath)) {
+            $this->sendFileWithRanges($this->filePath, $isHead);
+            return;
+        }
+        http_response_code($this->status);
+        foreach ($this->headers as $name => $value) {
+            header($name . ': ' . $value, true);
+        }
+        foreach ($this->cookies as $c) {
+            setcookie($c['name'], $c['value'], $c['options']);
+        }
+        if ($isHead) {
+            return;
+        }
+        echo $this->body;
+    }
+
+    private function sendFileWithRanges(string $path, bool $isHead): void
+    {
+        $size = (int)filesize($path);
+        $status = $this->status;
+        $start = 0;
+        $end = $size > 0 ? $size - 1 : 0;
+        $rangeHeader = isset($_SERVER['HTTP_RANGE']) && is_string($_SERVER['HTTP_RANGE']) ? trim($_SERVER['HTTP_RANGE']) : '';
+
+        foreach ($this->headers as $name => $value) {
+            if (strtolower($name) === 'content-length') {
+                continue;
+            }
+            header($name . ': ' . $value, true);
+        }
+        header('Accept-Ranges: bytes', true);
+        foreach ($this->cookies as $c) {
+            setcookie($c['name'], $c['value'], $c['options']);
+        }
+
+        if ($rangeHeader !== '' && $size > 0 && preg_match('/^bytes=(\d*)-(\d*)$/', $rangeHeader, $m) === 1) {
+            $rStart = $m[1];
+            $rEnd = $m[2];
+            if ($rStart === '' && $rEnd !== '') {
+                $suffix = (int)$rEnd;
+                if ($suffix <= 0) {
+                    http_response_code(416);
+                    header("Content-Range: bytes */{$size}", true);
+                    return;
+                }
+                $start = max(0, $size - $suffix);
+                $end = $size - 1;
+            } elseif ($rStart !== '') {
+                $start = (int)$rStart;
+                $end = $rEnd !== '' ? min((int)$rEnd, $size - 1) : ($size - 1);
+                if ($start >= $size || $start > $end) {
+                    http_response_code(416);
+                    header("Content-Range: bytes */{$size}", true);
+                    return;
+                }
+            }
+            $status = 206;
+            header("Content-Range: bytes {$start}-{$end}/{$size}", true);
+        }
+
+        $length = $size > 0 ? ($end - $start + 1) : 0;
+        header('Content-Length: ' . $length, true);
+        http_response_code($status);
+        if ($isHead || $length === 0) {
+            return;
+        }
+
+        $fp = fopen($path, 'rb');
+        if ($fp === false) {
+            return;
+        }
+        try {
+            if ($start > 0) {
+                fseek($fp, $start);
+            }
+            $remaining = $length;
+            while ($remaining > 0 && !feof($fp)) {
+                $chunk = fread($fp, min(65536, $remaining));
+                if ($chunk === false || $chunk === '') {
+                    break;
+                }
+                echo $chunk;
+                $remaining -= strlen($chunk);
+            }
+        } finally {
+            fclose($fp);
+        }
+    }
+PHP;
+    if (!str_contains($code, $oldSend)) {
+        throw new RuntimeException('Failed to patch Response::send() for Range support');
+    }
+    return str_replace($oldSend, $newSend, $code);
+});
+
+// Security.php upgraded so resolveJailedPath strictly permits only managed CloudDrive files (cd-*, up-*, seed-*, .trashed-*)
+$parts[] = wrapNamespacedFile($appRoot . '/framework/Security.php', static function (string $code): string {
+    $oldJail = <<<'PHP'
+        $safeName = basename($storageName);
+        if ($safeName === '' || $safeName !== $storageName || str_contains($safeName, '..')) {
+            return null;
+        }
+PHP;
+    $newJail = <<<'PHP'
+        $safeName = basename($storageName);
+        if (
+            $safeName === ''
+            || $safeName !== $storageName
+            || str_contains($safeName, '..')
+            || preg_match('/^(?:\.trashed-)?(?:cd-|up-|seed-)[a-zA-Z0-9._-]+$/', $safeName) !== 1
+        ) {
+            return null;
+        }
+PHP;
+    if (!str_contains($code, $oldJail)) {
+        throw new RuntimeException('Failed to patch Security::resolveJailedPath()');
+    }
+    return str_replace($oldJail, $newJail, $code);
+});
+
+foreach (['Container.php', 'Database.php', 'HttpException.php', 'MiddlewareInterface.php', 'Router.php', 'Application.php'] as $f) {
     $parts[] = wrapNamespacedFile($appRoot . '/framework/' . $f);
 }
 
-// In-memory compiled View & EmbeddedTemplates (zero external template files!)
+// In-memory compiled View & EmbeddedTemplates (share.php upgraded for direct partial download & video/audio player)
 $templateMethods = '';
-foreach (['layout', 'drive', 'about', 'share', 'offline'] as $tplName) {
+foreach (['layout', 'drive', 'about', 'offline'] as $tplName) {
     $templateMethods .= compileTemplateMethod($tplName, $appRoot . '/templates/' . $tplName . '.php');
 }
+$templateMethods .= compileTemplateMethod('share', $appRoot . '/templates/share.php', static function (string $tpl): string {
+    $oldShareTop = <<<'PHP'
+$isFolder = (int)$item['is_folder'] === 1;
+$isImg = !$isFolder && in_array(strtolower((string)$item['mime_type']), ['image/png', 'image/jpeg', 'image/webp', 'image/gif'], true);
+PHP;
+    $newShareTop = <<<'PHP'
+$isFolder = (int)$item['is_folder'] === 1;
+$mimeLower = strtolower((string)$item['mime_type']);
+$extLower = strtolower((string)($item['extension'] ?? ''));
+$isImg = !$isFolder && in_array($mimeLower, ['image/png', 'image/jpeg', 'image/webp', 'image/gif'], true);
+$isVideo = !$isFolder && (str_starts_with($mimeLower, 'video/') || in_array($extLower, ['mp4', 'm4v', 'webm', 'mov', 'ogv'], true));
+$isAudio = !$isFolder && (str_starts_with($mimeLower, 'audio/') || in_array($extLower, ['mp3', 'm4a', 'ogg', 'wav', 'flac', 'aac'], true));
+$dlHref = !empty($item['direct_url']) ? (string)$item['direct_url'] : ('/api/files/' . (int)$item['id'] . '/download');
+PHP;
+    $tpl = str_replace($oldShareTop, $newShareTop, $tpl);
+
+    $oldMediaBlock = <<<'PHP'
+    <?php if ($isImg): ?>
+      <p style="margin-top:16px"><img src="/api/files/<?= (int)$item['id'] ?>/preview" alt="<?= $e($item['name']) ?>" width="640" height="360" style="max-width:100%;height:auto;border-radius:8px;border:1px solid #dde3ea"></p>
+    <?php endif; ?>
+    <p style="margin-top:20px;display:flex;flex-wrap:wrap;gap:10px">
+      <a class="btn-primary" style="display:inline-flex;align-items:center" href="/api/files/<?= (int)$item['id'] ?>/download">このファイルをダウンロード</a>
+      <a class="btn-secondary" style="display:inline-flex;align-items:center" href="/">マイドライブへ戻る</a>
+    </p>
+PHP;
+    $newMediaBlock = <<<'PHP'
+    <?php if ($isImg): ?>
+      <p style="margin-top:16px"><img src="<?= $e(!empty($item['direct_url']) ? (string)$item['direct_url'] : '/api/files/' . (int)$item['id'] . '/preview') ?>" alt="<?= $e($item['name']) ?>" width="640" height="360" style="max-width:100%;height:auto;border-radius:8px;border:1px solid #dde3ea"></p>
+    <?php elseif ($isVideo): ?>
+      <p style="margin-top:16px"><video controls playsinline preload="metadata" src="<?= $e($dlHref) ?>" style="max-width:100%;max-height:540px;border-radius:8px;background:#000"></video></p>
+    <?php elseif ($isAudio): ?>
+      <p style="margin-top:16px"><audio controls preload="metadata" src="<?= $e($dlHref) ?>" style="width:min(560px,100%)"></audio></p>
+    <?php endif; ?>
+    <p style="margin-top:20px;display:flex;flex-wrap:wrap;gap:10px">
+      <a class="btn-primary" style="display:inline-flex;align-items:center" href="<?= $e($dlHref) ?>" download="<?= $e($item['name']) ?>">このファイルをダウンロード</a>
+      <a class="btn-secondary" style="display:inline-flex;align-items:center" href="/">マイドライブへ戻る</a>
+    </p>
+PHP;
+    $tpl = str_replace($oldMediaBlock, $newMediaBlock, $tpl);
+
+    $oldChildDl = '<a href="/api/files/<?= (int)$ch[\'id\'] ?>/download">ダウンロード</a>';
+    $newChildDl = '<a href="<?= $e(!empty($ch[\'direct_url\']) ? (string)$ch[\'direct_url\'] : \'/api/files/\' . (int)$ch[\'id\'] . \'/download\') ?>" download="<?= $e($ch[\'name\']) ?>">ダウンロード</a>';
+    return str_replace($oldChildDl, $newChildDl, $tpl);
+});
 
 $parts[] = <<<PHP
 namespace AiFramework {
@@ -290,11 +597,258 @@ final class View
 
 PHP;
 
-// Services (DriveService with finfo fallback for ultra-minimal shared hosts, SeoService, UiHelper using OPcache INLINE_CSS)
+// Services: DriveService upgraded for direct-serving safe extensions in __DIR__, trashed dotfile hiding, 200MB upload cap, and direct_url field
 $parts[] = wrapNamespacedFile($appRoot . '/app/Services/DriveService.php', static function (string $code): string {
-    $oldFinfo = "\$finfo = new \\finfo(FILEINFO_MIME_TYPE);\n        \$detectedMime = (string)(\$finfo->file(\$tmpPath) ?: 'application/octet-stream');";
-    $newFinfo = "\$detectedMime = class_exists(\\finfo::class) ? (string)((new \\finfo(FILEINFO_MIME_TYPE))->file(\$tmpPath) ?: 'application/octet-stream') : 'application/octet-stream';";
-    return str_replace($oldFinfo, $newFinfo, $code);
+    // 1. Add SAFE_DIRECT_EXTS allowlist and raise default MAX_UPLOAD_BYTES to 200MB for mp4 uploads
+    $oldConsts = "    public const MAX_UPLOAD_BYTES = 20971520; // 20 MB\n    public const MAX_DEPTH = 32;";
+    $newConsts = <<<'PHP'
+    public const MAX_UPLOAD_BYTES = 209715200;     // 200 MB (overridable via CLOUDDRIVE_MAX_UPLOAD_MB)
+    public const MAX_DEPTH = 32;
+    /** @var array<string, true> Non-executable extensions safe for direct Apache/Nginx 206 partial download */
+    public const SAFE_DIRECT_EXTS = [
+        'mp4' => true, 'm4v' => true, 'webm' => true, 'mov' => true, 'ogv' => true, 'mkv' => true,
+        'mp3' => true, 'm4a' => true, 'ogg' => true, 'wav' => true, 'flac' => true, 'aac' => true,
+        'png' => true, 'jpg' => true, 'jpeg' => true, 'gif' => true, 'webp' => true, 'avif' => true, 'bmp' => true,
+        'pdf' => true, 'zip' => true, 'tar' => true, 'gz' => true, '7z' => true, 'rar' => true,
+        'txt' => true, 'md' => true, 'csv' => true, 'json' => true,
+        'doc' => true, 'docx' => true, 'xls' => true, 'xlsx' => true, 'ppt' => true, 'pptx' => true,
+    ];
+
+    public static function maxUploadBytes(): int
+    {
+        $mb = getenv('CLOUDDRIVE_MAX_UPLOAD_MB');
+        if (is_string($mb) && ctype_digit($mb) && (int)$mb > 0) {
+            return (int)$mb * 1048576;
+        }
+        return self::MAX_UPLOAD_BYTES;
+    }
+
+    public static function isSafeDirectStorageName(?string $storageName): bool
+    {
+        if (!is_string($storageName) || $storageName === '' || str_starts_with($storageName, '.')) {
+            return false;
+        }
+        $ext = strtolower(pathinfo($storageName, PATHINFO_EXTENSION));
+        return isset(self::SAFE_DIRECT_EXTS[$ext]);
+    }
+PHP;
+    if (!str_contains($code, $oldConsts)) {
+        throw new RuntimeException('Failed to patch DriveService constants');
+    }
+    $code = str_replace($oldConsts, $newConsts, $code);
+
+    // 2. Respect maxUploadBytes(), guard finfo, and save safe extensions as cd-<hex>.<ext> (unsafe -> .blob)
+    $code = str_replace(
+        'if ($size > self::MAX_UPLOAD_BYTES) {',
+        'if ($size > self::maxUploadBytes()) {',
+        $code
+    );
+    $code = str_replace(
+        "\$finfo = new \\finfo(FILEINFO_MIME_TYPE);\n        \$detectedMime = (string)(\$finfo->file(\$tmpPath) ?: 'application/octet-stream');",
+        "\$detectedMime = class_exists(\\finfo::class) ? (string)((new \\finfo(FILEINFO_MIME_TYPE))->file(\$tmpPath) ?: 'application/octet-stream') : 'application/octet-stream';",
+        $code
+    );
+    $oldStorageLine = "        // Always use inert .blob extension on disk (defense-in-depth against executable uploads)\n        \$storageName = 'up-' . bin2hex(random_bytes(16)) . '.blob';";
+    $newStorageLine = "        // Safe non-executable media/documents keep their real extension for native HTTP 206 partial downloads;\n        // executable/active types (.php, .html, .svg, .js, etc.) are always isolated as inert .blob files.\n        \$safeExt = isset(self::SAFE_DIRECT_EXTS[\$ext]) ? \$ext : 'blob';\n        \$storageName = 'cd-' . bin2hex(random_bytes(16)) . '.' . \$safeExt;";
+    if (!str_contains($code, $oldStorageLine)) {
+        throw new RuntimeException('Failed to patch DriveService storageName logic');
+    }
+    $code = str_replace($oldStorageLine, $newStorageLine, $code);
+
+    // 3. On soft-delete to trash, rename direct files to `.trashed-<name>` so direct HTTP URLs are blocked immediately
+    $oldSoftDelete = <<<'PHP'
+        if (!$permanent && (int)$item['is_trashed'] === 0) {
+            $now = gmdate('Y-m-d\TH:i:s\Z');
+            $this->db->transaction(function (Database $db) use ($id, $now): void {
+                // Recursively soft-delete item and all active descendants (SEC-07)
+                $db->execute(
+                    'WITH RECURSIVE tree(id) AS (
+                        SELECT id FROM items WHERE id = ?
+                        UNION
+                        SELECT i.id FROM items i JOIN tree t ON i.parent_id = t.id
+                    )
+                    UPDATE items SET is_trashed = 1, trashed_at = ?, updated_at = ?
+                    WHERE id IN (SELECT id FROM tree) AND is_trashed = 0',
+                    [$id, $now, $now]
+                );
+                $db->execute(
+                    'INSERT INTO activities (item_id, action, actor_name, detail, created_at) VALUES (?, ?, ?, ?, ?)',
+                    [$id, 'trashed', '山田 太郎', 'ゴミ箱へ移動しました', $now]
+                );
+            });
+            return ['deleted' => true, 'permanent' => false, 'id' => $id];
+        }
+PHP;
+    $newSoftDelete = <<<'PHP'
+        if (!$permanent && (int)$item['is_trashed'] === 0) {
+            $now = gmdate('Y-m-d\TH:i:s\Z');
+            $toHide = $this->db->transaction(function (Database $db) use ($id, $now): array {
+                $files = $db->fetchAll(
+                    'WITH RECURSIVE tree(id, storage_name, is_trashed) AS (
+                        SELECT id, storage_name, is_trashed FROM items WHERE id = ?
+                        UNION
+                        SELECT i.id, i.storage_name, i.is_trashed FROM items i JOIN tree t ON i.parent_id = t.id
+                    )
+                    SELECT id, storage_name FROM tree WHERE is_trashed = 0 AND storage_name IS NOT NULL',
+                    [$id]
+                );
+                $db->execute(
+                    'WITH RECURSIVE tree(id) AS (
+                        SELECT id FROM items WHERE id = ?
+                        UNION
+                        SELECT i.id FROM items i JOIN tree t ON i.parent_id = t.id
+                    )
+                    UPDATE items SET is_trashed = 1, trashed_at = ?, updated_at = ?
+                    WHERE id IN (SELECT id FROM tree) AND is_trashed = 0',
+                    [$id, $now, $now]
+                );
+                $renames = [];
+                foreach ($files as $f) {
+                    $oldName = (string)$f['storage_name'];
+                    if (!str_starts_with($oldName, '.trashed-')) {
+                        $newName = '.trashed-' . $oldName;
+                        $db->execute('UPDATE items SET storage_name = ? WHERE id = ?', [$newName, (int)$f['id']]);
+                        $renames[] = [$oldName, $newName];
+                    }
+                }
+                $db->execute(
+                    'INSERT INTO activities (item_id, action, actor_name, detail, created_at) VALUES (?, ?, ?, ?, ?)',
+                    [$id, 'trashed', '山田 太郎', 'ゴミ箱へ移動しました', $now]
+                );
+                return $renames;
+            }, true);
+
+            foreach ($toHide as [$oldName, $newName]) {
+                $oldPath = Security::resolveJailedPath($this->uploadsDir, $oldName);
+                if ($oldPath !== null) {
+                    @rename($oldPath, $this->uploadsDir . DIRECTORY_SEPARATOR . $newName);
+                }
+            }
+            return ['deleted' => true, 'permanent' => false, 'id' => $id];
+        }
+PHP;
+    if (!str_contains($code, $oldSoftDelete)) {
+        throw new RuntimeException('Failed to patch DriveService soft-delete dotfile hiding');
+    }
+    $code = str_replace($oldSoftDelete, $newSoftDelete, $code);
+
+    // 4. On restore, rename `.trashed-<name>` back to `<name>` so direct partial downloads resume cleanly
+    $oldRestore = <<<'PHP'
+        return $this->db->transaction(function (Database $db) use ($id, $parentId, $now, $trashedAt): array {
+            $db->execute(
+                'UPDATE items SET is_trashed = 0, trashed_at = NULL, parent_id = ?, updated_at = ? WHERE id = ?',
+                [$parentId, $now, $id]
+            );
+            // Also restore descendants trashed together with this folder
+            if ($trashedAt !== null) {
+                $db->execute(
+                    'WITH RECURSIVE tree(id) AS (
+                        SELECT id FROM items WHERE parent_id = ?
+                        UNION
+                        SELECT i.id FROM items i JOIN tree t ON i.parent_id = t.id
+                    )
+                    UPDATE items SET is_trashed = 0, trashed_at = NULL, updated_at = ?
+                    WHERE id IN (SELECT id FROM tree) AND is_trashed = 1 AND trashed_at = ?',
+                    [$id, $now, $trashedAt]
+                );
+            }
+            $db->execute(
+                'INSERT INTO activities (item_id, action, actor_name, detail, created_at) VALUES (?, ?, ?, ?, ?)',
+                [$id, 'restored', '山田 太郎', 'ゴミ箱から復元しました', $now]
+            );
+            $row = $db->fetchOne('SELECT * FROM items WHERE id = ?', [$id]);
+            return $this->normalizeItem($row ?? []);
+        });
+PHP;
+    $newRestore = <<<'PHP'
+        $res = $this->db->transaction(function (Database $db) use ($id, $parentId, $now, $trashedAt): array {
+            $filesToRestore = [];
+            $selfFile = $db->fetchOne('SELECT id, storage_name FROM items WHERE id = ? AND storage_name IS NOT NULL', [$id]);
+            if ($selfFile !== null) {
+                $filesToRestore[] = $selfFile;
+            }
+            if ($trashedAt !== null) {
+                $descFiles = $db->fetchAll(
+                    'WITH RECURSIVE tree(id, storage_name, is_trashed, trashed_at) AS (
+                        SELECT id, storage_name, is_trashed, trashed_at FROM items WHERE parent_id = ?
+                        UNION
+                        SELECT i.id, i.storage_name, i.is_trashed, i.trashed_at FROM items i JOIN tree t ON i.parent_id = t.id
+                    )
+                    SELECT id, storage_name FROM tree WHERE is_trashed = 1 AND trashed_at = ? AND storage_name IS NOT NULL',
+                    [$id, $trashedAt]
+                );
+                $filesToRestore = array_merge($filesToRestore, $descFiles);
+            }
+
+            $db->execute(
+                'UPDATE items SET is_trashed = 0, trashed_at = NULL, parent_id = ?, updated_at = ? WHERE id = ?',
+                [$parentId, $now, $id]
+            );
+            if ($trashedAt !== null) {
+                $db->execute(
+                    'WITH RECURSIVE tree(id) AS (
+                        SELECT id FROM items WHERE parent_id = ?
+                        UNION
+                        SELECT i.id FROM items i JOIN tree t ON i.parent_id = t.id
+                    )
+                    UPDATE items SET is_trashed = 0, trashed_at = NULL, updated_at = ?
+                    WHERE id IN (SELECT id FROM tree) AND is_trashed = 1 AND trashed_at = ?',
+                    [$id, $now, $trashedAt]
+                );
+            }
+            $renames = [];
+            foreach ($filesToRestore as $f) {
+                $oldName = (string)$f['storage_name'];
+                if (str_starts_with($oldName, '.trashed-')) {
+                    $newName = substr($oldName, 9);
+                    $db->execute('UPDATE items SET storage_name = ? WHERE id = ?', [$newName, (int)$f['id']]);
+                    $renames[] = [$oldName, $newName];
+                }
+            }
+            $db->execute(
+                'INSERT INTO activities (item_id, action, actor_name, detail, created_at) VALUES (?, ?, ?, ?, ?)',
+                [$id, 'restored', '山田 太郎', 'ゴミ箱から復元しました', $now]
+            );
+            $row = $db->fetchOne('SELECT * FROM items WHERE id = ?', [$id]);
+            return ['item' => $this->normalizeItem($row ?? []), 'renames' => $renames];
+        }, true);
+
+        foreach ($res['renames'] as [$oldName, $newName]) {
+            $oldPath = Security::resolveJailedPath($this->uploadsDir, $oldName);
+            if ($oldPath !== null) {
+                @rename($oldPath, $this->uploadsDir . DIRECTORY_SEPARATOR . $newName);
+            }
+        }
+        return $res['item'];
+PHP;
+    if (!str_contains($code, $oldRestore)) {
+        throw new RuntimeException('Failed to patch DriveService::restoreItem()');
+    }
+    $code = str_replace($oldRestore, $newRestore, $code);
+
+    // 5. Add direct_url to normalizeItem() when active, non-folder, and safe direct extension
+    $oldNormEnd = <<<'PHP'
+            'created_at' => (string)$row['created_at'],
+            'updated_at' => (string)$row['updated_at'],
+        ];
+    }
+PHP;
+    $newNormEnd = <<<'PHP'
+            'created_at' => (string)$row['created_at'],
+            'updated_at' => (string)$row['updated_at'],
+            'direct_url' => ((int)$row['is_folder'] === 0
+                && (int)$row['is_trashed'] === 0
+                && self::isSafeDirectStorageName(isset($row['storage_name']) ? (string)$row['storage_name'] : null)
+                && (getenv('CLOUDDRIVE_DATA_DIR') === false || getenv('CLOUDDRIVE_DATA_DIR') === ''))
+                ? ('/' . rawurlencode((string)$row['storage_name']))
+                : null,
+        ];
+    }
+PHP;
+    if (!str_contains($code, $oldNormEnd)) {
+        throw new RuntimeException('Failed to patch DriveService::normalizeItem()');
+    }
+    return str_replace($oldNormEnd, $newNormEnd, $code);
 });
 
 $parts[] = wrapNamespacedFile($appRoot . '/app/Services/SeoService.php');
@@ -327,13 +881,55 @@ PHP;
     return str_replace($oldCssMethod, $newCssMethod, $code);
 });
 
-// Middleware & Controllers
+// Middleware
 foreach (['SecurityHeadersMiddleware.php', 'CsrfMiddleware.php'] as $m) {
     $parts[] = wrapNamespacedFile($appRoot . '/app/Middleware/' . $m);
 }
-foreach (['PageController.php', 'ApiController.php', 'MetaController.php'] as $c) {
-    $parts[] = wrapNamespacedFile($appRoot . '/app/Controllers/' . $c);
-}
+
+// Controllers (ApiController upgraded for video/audio Range preview + dynamic maxUploadBytes)
+$parts[] = wrapNamespacedFile($appRoot . '/app/Controllers/PageController.php');
+$parts[] = wrapNamespacedFile($appRoot . '/app/Controllers/ApiController.php', static function (string $code): string {
+    $code = str_replace(
+        'if ($contentLength > DriveService::MAX_UPLOAD_BYTES && empty($request->files)) {',
+        'if ($contentLength > DriveService::maxUploadBytes() && empty($request->files)) {',
+        $code
+    );
+    $oldPdf = <<<'PHP'
+        if ($mime === 'application/pdf') {
+            return Response::file($path, 'application/pdf', null, [
+                'Content-Disposition' => 'inline',
+                'Cache-Control' => 'private, max-age=3600',
+                'Content-Security-Policy' => "default-src 'none'; object-src 'self'; script-src 'none'; form-action 'none'; frame-ancestors 'self'",
+            ]);
+        }
+PHP;
+    $newPdfAndMedia = <<<'PHP'
+        if ($mime === 'application/pdf') {
+            return Response::file($path, 'application/pdf', null, [
+                'Content-Disposition' => 'inline',
+                'Cache-Control' => 'private, max-age=3600',
+                'Content-Security-Policy' => "default-src 'none'; object-src 'self'; script-src 'none'; form-action 'none'; frame-ancestors 'self'",
+            ]);
+        }
+
+        $mediaMimes = [
+            'mp4' => 'video/mp4', 'm4v' => 'video/mp4', 'webm' => 'video/webm', 'mov' => 'video/quicktime', 'ogv' => 'video/ogg',
+            'mp3' => 'audio/mpeg', 'm4a' => 'audio/mp4', 'ogg' => 'audio/ogg', 'wav' => 'audio/wav', 'flac' => 'audio/flac', 'aac' => 'audio/aac',
+        ];
+        if (str_starts_with($mime, 'video/') || str_starts_with($mime, 'audio/') || isset($mediaMimes[$ext])) {
+            $serveMime = (str_starts_with($mime, 'video/') || str_starts_with($mime, 'audio/')) ? $mime : $mediaMimes[$ext];
+            return Response::file($path, $serveMime, null, [
+                'Cache-Control' => 'private, max-age=3600',
+                'Content-Security-Policy' => "default-src 'none'; media-src 'self'; frame-ancestors 'self'",
+            ]);
+        }
+PHP;
+    if (!str_contains($code, $oldPdf)) {
+        throw new RuntimeException('Failed to patch ApiController::previewFile() for video/audio');
+    }
+    return str_replace($oldPdf, $newPdfAndMedia, $code);
+});
+$parts[] = wrapNamespacedFile($appRoot . '/app/Controllers/MetaController.php');
 
 // EmbeddedAssets + SingleFileRuntime + Front-Controller in global namespace
 $manifestExport = var_export($manifest, true);
@@ -399,9 +995,32 @@ final class SingleFileRuntime
 {
     private const SCHEMA_SQL = {$schemaSqlExport};
 
+    /** @var array<string, string> */
+    private const DIRECT_MIME_MAP = [
+        'mp4' => 'video/mp4', 'm4v' => 'video/mp4', 'webm' => 'video/webm', 'mov' => 'video/quicktime',
+        'ogv' => 'video/ogg', 'mkv' => 'video/x-matroska',
+        'mp3' => 'audio/mpeg', 'm4a' => 'audio/mp4', 'ogg' => 'audio/ogg', 'wav' => 'audio/wav',
+        'flac' => 'audio/flac', 'aac' => 'audio/aac',
+        'png' => 'image/png', 'jpg' => 'image/jpeg', 'jpeg' => 'image/jpeg', 'gif' => 'image/gif',
+        'webp' => 'image/webp', 'avif' => 'image/avif', 'bmp' => 'image/bmp',
+        'pdf' => 'application/pdf', 'zip' => 'application/zip', 'tar' => 'application/x-tar',
+        'gz' => 'application/gzip', '7z' => 'application/x-7z-compressed', 'rar' => 'application/vnd.rar',
+        'txt' => 'text/plain; charset=utf-8', 'md' => 'text/markdown; charset=utf-8',
+        'csv' => 'text/csv; charset=utf-8', 'json' => 'application/json; charset=utf-8',
+        'doc' => 'application/msword',
+        'docx' => 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'xls' => 'application/vnd.ms-excel',
+        'xlsx' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'ppt' => 'application/vnd.ms-powerpoint',
+        'pptx' => 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    ];
+
     /**
-     * Handles dotfile 403 protection and embedded static assets (/assets/*, /sw.js)
-     * before booting SQLite or the full application pipeline.
+     * Handles:
+     *  1) Defense-in-depth 403 protection for dotfiles, .blob, .sqlite*, .secret, .lock
+     *  2) Direct static file serving (with RFC 9110 Range / 206 Partial Content) for safe files
+     *     located in the same directory as index.php (when routed through PHP, e.g. `php -S`)
+     *  3) Embedded UI static assets (/assets/*, /sw.js) with ETag / 304
      */
     public static function tryServeStaticOrBlockDotfile(): bool
     {
@@ -411,8 +1030,11 @@ final class SingleFileRuntime
             \$path = '/';
         }
 
-        // Defense-in-depth: block dotfiles (except /.well-known) even without Nginx/Apache rules
-        if (preg_match('#^/\\.(?!well-known(/|\$))#', \$path) === 1 || str_contains(\$path, '/.clouddrive_data')) {
+        // 1. Strictly block dotfiles (except /.well-known) and internal/isolated extensions
+        if (
+            preg_match('#^/\\.(?!well-known(/|\$))#', \$path) === 1
+            || preg_match('#\\.(?:blob|sqlite|sqlite-wal|sqlite-shm|secret|lock)\$#i', \$path) === 1
+        ) {
             http_response_code(403);
             header('Content-Type: text/plain; charset=utf-8');
             header('X-Content-Type-Options: nosniff');
@@ -423,12 +1045,56 @@ final class SingleFileRuntime
             return true;
         }
 
+        \$method = strtoupper((string)(\$_SERVER['REQUEST_METHOD'] ?? 'GET'));
+
+        // 2. Direct safe user/seed file in the same directory as index.php (e.g. /cd-xxxx.mp4)
+        // Note: on Apache/LiteSpeed/Nginx with `RewriteCond %{REQUEST_FILENAME} !-f`, the web server
+        // serves this directly in C with native 206 Partial Content without even invoking PHP.
+        // This fallback guarantees identical 206 Partial Content behavior on `php -S` too.
+        if (preg_match('#^/((?:cd-|up-|seed-)[a-zA-Z0-9._-]+)\$#', \$path, \$m) === 1) {
+            \$fileName = \$m[1];
+            if (DriveService::isSafeDirectStorageName(\$fileName)) {
+                \$configuredDir = getenv('CLOUDDRIVE_DATA_DIR');
+                \$dataDir = (is_string(\$configuredDir) && \$configuredDir !== '') ? rtrim(\$configuredDir, '/\\\\') : __DIR__;
+                \$fullPath = Security::resolveJailedPath(\$dataDir, \$fileName);
+                if (\$fullPath !== null) {
+                    if (\$method !== 'GET' && \$method !== 'HEAD') {
+                        http_response_code(405);
+                        header('Allow: GET, HEAD');
+                        header('Content-Type: text/plain; charset=utf-8');
+                        echo 'Method Not Allowed';
+                        return true;
+                    }
+                    \$ext = strtolower(pathinfo(\$fileName, PATHINFO_EXTENSION));
+                    \$mime = self::DIRECT_MIME_MAP[\$ext] ?? 'application/octet-stream';
+                    \$etag = '"' . md5(\$fileName . ':' . filesize(\$fullPath) . ':' . filemtime(\$fullPath)) . '"';
+                    \$inm = (string)(\$_SERVER['HTTP_IF_NONE_MATCH'] ?? '');
+                    if (\$inm !== '' && trim(\$inm) === \$etag && empty(\$_SERVER['HTTP_RANGE'])) {
+                        header('ETag: ' . \$etag);
+                        header('Cache-Control: public, max-age=3600');
+                        header('Accept-Ranges: bytes');
+                        http_response_code(304);
+                        return true;
+                    }
+                    \$res = Response::file(\$fullPath, \$mime, null, [
+                        'ETag' => \$etag,
+                        'Cache-Control' => 'public, max-age=3600',
+                        'X-Framework' => 'ai-framework',
+                        'X-Content-Type-Options' => 'nosniff',
+                        'Referrer-Policy' => 'strict-origin-when-cross-origin',
+                    ]);
+                    \$res->send(\$method === 'HEAD');
+                    return true;
+                }
+            }
+        }
+
+        // 3. Embedded UI static assets (/assets/*, /sw.js)
         \$meta = EmbeddedAssets::MANIFEST[\$path] ?? null;
         if (\$meta === null) {
             return false;
         }
 
-        \$method = strtoupper((string)(\$_SERVER['REQUEST_METHOD'] ?? 'GET'));
         if (\$method !== 'GET' && \$method !== 'HEAD') {
             http_response_code(405);
             header('Allow: GET, HEAD');
@@ -471,34 +1137,27 @@ final class SingleFileRuntime
     /** @return array{dataDir:string, dbPath:string, uploadsDir:string, secret:string} */
     public static function prepareEnvironment(): array
     {
+        // Default data & uploads area = EXACT SAME directory as index.php (__DIR__)
+        // so web servers serve safe media/documents directly with native HTTP 206 Partial Content!
         \$configuredDir = getenv('CLOUDDRIVE_DATA_DIR');
         \$dataDir = (is_string(\$configuredDir) && \$configuredDir !== '')
             ? rtrim(\$configuredDir, '/\\\\')
-            : (__DIR__ . DIRECTORY_SEPARATOR . '.clouddrive_data');
+            : __DIR__;
 
-        \$uploadsDir = \$dataDir . DIRECTORY_SEPARATOR . 'uploads';
-        \$dbPath = \$dataDir . DIRECTORY_SEPARATOR . 'database.sqlite';
-
-        if (!is_dir(\$uploadsDir)) {
-            @mkdir(\$uploadsDir, 0700, true);
+        if (!is_dir(\$dataDir)) {
+            @mkdir(\$dataDir, 0755, true);
         }
 
-        // Protect data directory on Apache / LiteSpeed rental servers
-        \$dataHtaccess = \$dataDir . DIRECTORY_SEPARATOR . '.htaccess';
-        if (!is_file(\$dataHtaccess)) {
-            @file_put_contents(
-                \$dataHtaccess,
-                "<IfModule mod_authz_core.c>\\n  Require all denied\\n</IfModule>\\n<IfModule !mod_authz_core.c>\\n  Order allow,deny\\n  Deny from all\\n</IfModule>\\n"
-            );
-            @file_put_contents(\$dataDir . DIRECTORY_SEPARATOR . 'index.html', '');
-        }
+        \$uploadsDir = \$dataDir;
+        \$dbPath = \$dataDir . DIRECTORY_SEPARATOR . '.clouddrive.sqlite';
+        \$secretFile = \$dataDir . DIRECTORY_SEPARATOR . '.clouddrive.secret';
+        \$lockFile = \$dataDir . DIRECTORY_SEPARATOR . '.clouddrive.lock';
 
-        // On Apache/LiteSpeed shared hosting, auto-create clean rewrite .htaccess if absent
+        // On Apache/LiteSpeed shared hosting, auto-create hardened .htaccess if absent
         self::maybeCreateRootHtaccess();
 
         // Fast-path once initialized
         \$envSecret = getenv('APP_SECRET');
-        \$secretFile = \$dataDir . DIRECTORY_SEPARATOR . '.app_secret';
         \$secret = (is_string(\$envSecret) && strlen(\$envSecret) >= 32) ? \$envSecret : '';
 
         if (\$secret === '' && is_file(\$secretFile)) {
@@ -510,7 +1169,7 @@ final class SingleFileRuntime
 
         \$needsInit = (\$secret === '') || !is_file(\$dbPath) || filesize(\$dbPath) === 0;
         if (\$needsInit) {
-            \$lockFp = fopen(\$dataDir . DIRECTORY_SEPARATOR . '.init.lock', 'c+');
+            \$lockFp = fopen(\$lockFile, 'c+');
             if (\$lockFp !== false) {
                 flock(\$lockFp, LOCK_EX);
                 try {
@@ -560,12 +1219,24 @@ final class SingleFileRuntime
             return;
         }
         \$self = basename(__FILE__);
-        // Rental-server safe (no Options directive that triggers HTTP 500 on Sakura/Lolipop)
+        // Rental-server safe (no Options directive that triggers HTTP 500 on Sakura/Lolipop).
+        // Real safe files in __DIR__ (e.g. cd-xxxx.mp4) bypass PHP via `!-f` for native HTTP 206 partial downloads,
+        // while dotfiles (.clouddrive.sqlite, .clouddrive.secret, .trashed-*) and .blob files are strictly denied.
         \$rules = <<<HT
 DirectoryIndex {\$self}
+<FilesMatch "(^\\.(?!well-known)|\\.blob\$|\\.sqlite(-wal|-shm)?\$|\\.secret\$|\\.lock\$)">
+  <IfModule mod_authz_core.c>
+    Require all denied
+  </IfModule>
+  <IfModule !mod_authz_core.c>
+    Order allow,deny
+    Deny from all
+  </IfModule>
+</FilesMatch>
 <IfModule mod_rewrite.c>
   RewriteEngine On
   RewriteRule ^\\.(?!well-known/) - [F,L]
+  RewriteRule \\.(?:blob|sqlite|sqlite-wal|sqlite-shm|secret|lock)\$ - [F,L]
   RewriteCond %{REQUEST_FILENAME} !-f
   RewriteRule ^ {\$self} [QSA,L]
 </IfModule>
@@ -667,12 +1338,12 @@ HT;
     }
 }
 
-// 1. Fast-path: dotfile 403 protection & embedded static assets (/assets/*, /sw.js)
+// 1. Fast-path: dotfile/secret/blob 403 guard, direct Range file fallback, & embedded UI assets
 if (SingleFileRuntime::tryServeStaticOrBlockDotfile()) {
     return;
 }
 
-// 2. Zero-config rental server runtime preparation (data dir, secret, SQLite auto-init)
+// 2. Zero-config rental server runtime preparation (same dir as index.php, secret, SQLite auto-init)
 \$env = SingleFileRuntime::prepareEnvironment();
 
 // 3. Boot AI Custom Framework DI Container & Application
@@ -752,5 +1423,5 @@ file_put_contents($outPath, $finalBytes);
 $sizeKb = round(strlen($finalBytes) / 1024, 1);
 $phpKb = round((strlen($finalBytes) - strlen($binaryPayload)) / 1024, 1);
 $assetKb = round(strlen($binaryPayload) / 1024, 1);
-echo "Built single-file CloudDrive -> {$outPath}\n";
+echo "Built single-file CloudDrive (same-dir storage + HTTP 206 Range) -> {$outPath}\n";
 echo "Total size: {$sizeKb} KB (PHP+Templates+CSS+Seeder: {$phpKb} KB, Binary Assets: {$assetKb} KB)\n";

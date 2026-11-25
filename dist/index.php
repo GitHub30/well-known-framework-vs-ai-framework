@@ -8,18 +8,22 @@ declare(strict_types=1);
  * Upload this single file as `index.php` to any PHP 8.3 shared hosting / rental server
  * (Xserver, Sakura, Lolipop, ConoHa WING, MixHost, Nginx, Apache, LiteSpeed, or `php -S`).
  *
- * First-request auto-provisioning:
- *   - Creates `.clouddrive_data/` (0700) protected by deny-all `.htaccess` + dotfile 403 guard
- *   - Generates a random 256-bit CSRF HMAC secret in `.clouddrive_data/.app_secret` (0600)
- *   - Initializes SQLite WAL database & seeds 71 sample items (set CLOUDDRIVE_SKIP_SEED=1 for empty)
- *   - On Apache/LiteSpeed, auto-creates rental-server-safe `.htaccess` if none exists
- *   - Serves all CSS, JS, Service Worker, PWA icons, and screenshots directly from this file
+ * Storage Layout (same directory as `index.php` for native direct partial downloads):
+ *   - Uploaded safe media/documents (mp4, webm, mov, mp3, pdf, png, jpg, zip, etc.) are saved
+ *     directly alongside `index.php` as `cd-<hex>.<ext>` so Apache/LiteSpeed/Nginx serves them
+ *     directly with native HTTP 206 Partial Content (Accept-Ranges: bytes) seeking/resuming.
+ *   - Potentially executable or active-content uploads (.php, .phtml, .html, .svg, .js, etc.)
+ *     are isolated as `cd-<hex>.blob` and blocked from direct HTTP access (zero RCE/XSS).
+ *   - Internal state files (`.clouddrive.sqlite`, `.clouddrive.secret`, `.clouddrive.lock`)
+ *     and trashed files (`.trashed-*`) are blocked with 403 via both `.htaccess` and PHP.
+ *   - PHP's Response::file() and direct-file fallback also implement RFC 9110 Range (206/416).
  *
  * Optional Environment Variables:
- *   APP_SECRET            Override CSRF HMAC secret (>= 32 bytes)
- *   APP_URL               Fixed canonical origin URL (e.g. https://drive.example.com)
- *   CLOUDDRIVE_DATA_DIR   Custom writable data directory outside document root
- *   CLOUDDRIVE_SKIP_SEED  Set to "1" to initialize an empty Drive instead of 71 demo items
+ *   APP_SECRET             Override CSRF HMAC secret (>= 32 bytes)
+ *   APP_URL                Fixed canonical origin URL (e.g. https://drive.example.com)
+ *   CLOUDDRIVE_DATA_DIR    Override data/uploads directory (default: same dir as index.php)
+ *   CLOUDDRIVE_MAX_UPLOAD_MB Override max upload size in MB (default: 200)
+ *   CLOUDDRIVE_SKIP_SEED   Set to "1" to initialize an empty Drive instead of 71 demo items
  *   CLOUDDRIVE_NO_HTACCESS Set to "1" to disable automatic Apache/LiteSpeed `.htaccess` creation
  */
 
@@ -195,6 +199,316 @@ final class Request
 }
 
 namespace AiFramework {
+final class Response
+{
+    /** @var list<array{name:string,value:string,options:array<string,mixed>}> */
+    private array $cookies = [];
+    private ?string $filePath = null;
+
+    /** @param array<string, string> $headers */
+    public function __construct(
+        private string $body = '',
+        private int $status = 200,
+        private array $headers = [],
+    ) {}
+
+    public static function html(string $html, int $status = 200, array $headers = []): self
+    {
+        return new self($html, $status, array_merge(['Content-Type' => 'text/html; charset=utf-8'], $headers));
+    }
+
+    public static function json(mixed $data, int $status = 200, array $headers = []): self
+    {
+        $encoded = json_encode(
+            $data,
+            JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE | JSON_THROW_ON_ERROR
+        );
+        return new self($encoded, $status, array_merge(['Content-Type' => 'application/json; charset=utf-8'], $headers));
+    }
+
+    public static function text(string $text, int $status = 200, string $contentType = 'text/plain; charset=utf-8', array $headers = []): self
+    {
+        return new self($text, $status, array_merge(['Content-Type' => $contentType], $headers));
+    }
+
+    public static function file(string $absolutePath, string $contentType, ?string $downloadName = null, array $headers = []): self
+    {
+        $res = new self('', 200, array_merge([
+            'Content-Type' => $contentType,
+            'Content-Length' => (string)filesize($absolutePath),
+        ], $headers));
+        if ($downloadName !== null) {
+            $safeAscii = preg_replace('/[^a-zA-Z0-9._-]/', '_', $downloadName) ?: 'download';
+            $utf8 = rawurlencode($downloadName);
+            $res = $res->withHeader('Content-Disposition', "attachment; filename=\"{$safeAscii}\"; filename*=UTF-8''{$utf8}");
+        }
+        $res->filePath = $absolutePath;
+        return $res;
+    }
+
+    public function status(): int
+    {
+        return $this->status;
+    }
+
+    public function hasHeader(string $name): bool
+    {
+        $target = strtolower($name);
+        foreach ($this->headers as $k => $_) {
+            if (strtolower($k) === $target) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public function withHeader(string $name, string $value): self
+    {
+        $clone = clone $this;
+        $clone->headers[$name] = $value;
+        return $clone;
+    }
+
+    /** @param array<string, mixed> $options */
+    public function withCookie(string $name, string $value, array $options = []): self
+    {
+        $clone = clone $this;
+        $clone->cookies[] = ['name' => $name, 'value' => $value, 'options' => $options];
+        return $clone;
+    }
+
+    public function send(bool $isHead = false): void
+    {
+        if ($this->filePath !== null && is_file($this->filePath)) {
+            $this->sendFileWithRanges($this->filePath, $isHead);
+            return;
+        }
+        http_response_code($this->status);
+        foreach ($this->headers as $name => $value) {
+            header($name . ': ' . $value, true);
+        }
+        foreach ($this->cookies as $c) {
+            setcookie($c['name'], $c['value'], $c['options']);
+        }
+        if ($isHead) {
+            return;
+        }
+        echo $this->body;
+    }
+
+    private function sendFileWithRanges(string $path, bool $isHead): void
+    {
+        $size = (int)filesize($path);
+        $status = $this->status;
+        $start = 0;
+        $end = $size > 0 ? $size - 1 : 0;
+        $rangeHeader = isset($_SERVER['HTTP_RANGE']) && is_string($_SERVER['HTTP_RANGE']) ? trim($_SERVER['HTTP_RANGE']) : '';
+
+        foreach ($this->headers as $name => $value) {
+            if (strtolower($name) === 'content-length') {
+                continue;
+            }
+            header($name . ': ' . $value, true);
+        }
+        header('Accept-Ranges: bytes', true);
+        foreach ($this->cookies as $c) {
+            setcookie($c['name'], $c['value'], $c['options']);
+        }
+
+        if ($rangeHeader !== '' && $size > 0 && preg_match('/^bytes=(\d*)-(\d*)$/', $rangeHeader, $m) === 1) {
+            $rStart = $m[1];
+            $rEnd = $m[2];
+            if ($rStart === '' && $rEnd !== '') {
+                $suffix = (int)$rEnd;
+                if ($suffix <= 0) {
+                    http_response_code(416);
+                    header("Content-Range: bytes */{$size}", true);
+                    return;
+                }
+                $start = max(0, $size - $suffix);
+                $end = $size - 1;
+            } elseif ($rStart !== '') {
+                $start = (int)$rStart;
+                $end = $rEnd !== '' ? min((int)$rEnd, $size - 1) : ($size - 1);
+                if ($start >= $size || $start > $end) {
+                    http_response_code(416);
+                    header("Content-Range: bytes */{$size}", true);
+                    return;
+                }
+            }
+            $status = 206;
+            header("Content-Range: bytes {$start}-{$end}/{$size}", true);
+        }
+
+        $length = $size > 0 ? ($end - $start + 1) : 0;
+        header('Content-Length: ' . $length, true);
+        http_response_code($status);
+        if ($isHead || $length === 0) {
+            return;
+        }
+
+        $fp = fopen($path, 'rb');
+        if ($fp === false) {
+            return;
+        }
+        try {
+            if ($start > 0) {
+                fseek($fp, $start);
+            }
+            $remaining = $length;
+            while ($remaining > 0 && !feof($fp)) {
+                $chunk = fread($fp, min(65536, $remaining));
+                if ($chunk === false || $chunk === '') {
+                    break;
+                }
+                echo $chunk;
+                $remaining -= strlen($chunk);
+            }
+        } finally {
+            fclose($fp);
+        }
+    }
+}
+}
+
+namespace AiFramework {
+/**
+ * Cryptographic CSRF protection, Unicode-safe filename sanitization, strict ID parsing, and path-jail utilities.
+ */
+final class Security
+{
+    public const CSRF_COOKIE = 'clouddrive_csrf';
+    public const CSRF_TTL = 43200; // 12 hours
+
+    private const PUBLIC_CACHEABLE_PATHS = [
+        '/manifest.webmanifest' => true,
+        '/robots.txt' => true,
+        '/sitemap.xml' => true,
+        '/llms.txt' => true,
+        '/llms-full.txt' => true,
+        '/openapi.json' => true,
+        '/api/health' => true,
+    ];
+
+    public function __construct(private readonly string $secretKey)
+    {
+        if (strlen($secretKey) < 32) {
+            throw new \RuntimeException('APP_SECRET must be configured with at least 32 bytes of entropy.');
+        }
+    }
+
+    public static function isPublicCacheablePath(string $path): bool
+    {
+        return isset(self::PUBLIC_CACHEABLE_PATHS[$path]);
+    }
+
+    public function issueCsrfToken(): string
+    {
+        $ts = (string)time();
+        $nonce = bin2hex(random_bytes(16));
+        $payload = $ts . '.' . $nonce;
+        $sig = hash_hmac('sha256', $payload, $this->secretKey);
+        return $payload . '.' . $sig;
+    }
+
+    public function verifyCsrfToken(?string $token): bool
+    {
+        if (!is_string($token) || substr_count($token, '.') !== 2) {
+            return false;
+        }
+        [$ts, $nonce, $sig] = explode('.', $token, 3);
+        if (!ctype_digit($ts) || !ctype_xdigit($nonce) || strlen($nonce) !== 32 || strlen($sig) !== 64) {
+            return false;
+        }
+        $age = time() - (int)$ts;
+        if ($age < -60 || $age > self::CSRF_TTL) {
+            return false;
+        }
+        $expected = hash_hmac('sha256', $ts . '.' . $nonce, $this->secretKey);
+        return hash_equals($expected, $sig);
+    }
+
+    public function verifyDoubleSubmit(?string $cookieToken, ?string $headerToken): bool
+    {
+        if (!$this->verifyCsrfToken($cookieToken) || !$this->verifyCsrfToken($headerToken)) {
+            return false;
+        }
+        return hash_equals((string)$cookieToken, (string)$headerToken);
+    }
+
+    public static function sanitizeItemName(string $name): string
+    {
+        $clean = mb_scrub($name, 'UTF-8');
+        // Strip ASCII control chars, slashes, and Unicode Bidi/RTLO spoofing controls
+        $clean = preg_replace('/[\x00-\x1F\x7F\/\\\\]+/u', ' ', $clean) ?? '';
+        $clean = preg_replace('/[\x{200E}\x{200F}\x{202A}-\x{202E}\x{2066}-\x{2069}\x{FEFF}]/u', '', $clean) ?? '';
+        $clean = trim(preg_replace('/\s+/u', ' ', $clean) ?? '');
+        $clean = trim(mb_substr($clean, 0, 200, 'UTF-8'));
+        if ($clean === '' || $clean === '.' || $clean === '..') {
+            return '';
+        }
+        return $clean;
+    }
+
+    public static function parseOptionalPositiveInt(mixed $value, string $fieldName = 'id', int $errorStatus = 422): ?int
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+        if (is_bool($value) || is_array($value) || is_object($value)) {
+            throw new HttpException($errorStatus, "{$fieldName} の形式が不正です");
+        }
+        if (is_int($value)) {
+            if ($value < 1) {
+                throw new HttpException($errorStatus, "{$fieldName} は正の整数で指定してください");
+            }
+            return $value;
+        }
+        if (is_string($value) && ctype_digit($value)) {
+            $intVal = (int)$value;
+            if ($intVal >= 1) {
+                return $intVal;
+            }
+        }
+        throw new HttpException($errorStatus, "{$fieldName} は正の整数で指定してください");
+    }
+
+    public static function requireString(mixed $value, string $fieldName, bool $allowNull = false): ?string
+    {
+        if ($value === null && $allowNull) {
+            return null;
+        }
+        if (!is_string($value)) {
+            throw new HttpException(422, "{$fieldName} は文字列で指定してください");
+        }
+        return mb_scrub($value, 'UTF-8');
+    }
+
+    public static function resolveJailedPath(string $baseDir, string $storageName): ?string
+    {
+        $base = realpath($baseDir);
+        if ($base === false) {
+            return null;
+        }
+        $safeName = basename($storageName);
+        if (
+            $safeName === ''
+            || $safeName !== $storageName
+            || str_contains($safeName, '..')
+            || preg_match('/^(?:\.trashed-)?(?:cd-|up-|seed-)[a-zA-Z0-9._-]+$/', $safeName) !== 1
+        ) {
+            return null;
+        }
+        $full = realpath($base . DIRECTORY_SEPARATOR . $safeName);
+        if ($full === false || !str_starts_with($full, $base . DIRECTORY_SEPARATOR) || !is_file($full)) {
+            return null;
+        }
+        return $full;
+    }
+}
+}
+
+namespace AiFramework {
 /**
  * Lightweight lazy singleton Dependency Injection container.
  */
@@ -342,106 +656,6 @@ interface MiddlewareInterface
 }
 
 namespace AiFramework {
-final class Response
-{
-    /** @var list<array{name:string,value:string,options:array<string,mixed>}> */
-    private array $cookies = [];
-    private ?string $filePath = null;
-
-    /** @param array<string, string> $headers */
-    public function __construct(
-        private string $body = '',
-        private int $status = 200,
-        private array $headers = [],
-    ) {}
-
-    public static function html(string $html, int $status = 200, array $headers = []): self
-    {
-        return new self($html, $status, array_merge(['Content-Type' => 'text/html; charset=utf-8'], $headers));
-    }
-
-    public static function json(mixed $data, int $status = 200, array $headers = []): self
-    {
-        $encoded = json_encode(
-            $data,
-            JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE | JSON_THROW_ON_ERROR
-        );
-        return new self($encoded, $status, array_merge(['Content-Type' => 'application/json; charset=utf-8'], $headers));
-    }
-
-    public static function text(string $text, int $status = 200, string $contentType = 'text/plain; charset=utf-8', array $headers = []): self
-    {
-        return new self($text, $status, array_merge(['Content-Type' => $contentType], $headers));
-    }
-
-    public static function file(string $absolutePath, string $contentType, ?string $downloadName = null, array $headers = []): self
-    {
-        $res = new self('', 200, array_merge([
-            'Content-Type' => $contentType,
-            'Content-Length' => (string)filesize($absolutePath),
-        ], $headers));
-        if ($downloadName !== null) {
-            $safeAscii = preg_replace('/[^a-zA-Z0-9._-]/', '_', $downloadName) ?: 'download';
-            $utf8 = rawurlencode($downloadName);
-            $res = $res->withHeader('Content-Disposition', "attachment; filename=\"{$safeAscii}\"; filename*=UTF-8''{$utf8}");
-        }
-        $res->filePath = $absolutePath;
-        return $res;
-    }
-
-    public function status(): int
-    {
-        return $this->status;
-    }
-
-    public function hasHeader(string $name): bool
-    {
-        $target = strtolower($name);
-        foreach ($this->headers as $k => $_) {
-            if (strtolower($k) === $target) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    public function withHeader(string $name, string $value): self
-    {
-        $clone = clone $this;
-        $clone->headers[$name] = $value;
-        return $clone;
-    }
-
-    /** @param array<string, mixed> $options */
-    public function withCookie(string $name, string $value, array $options = []): self
-    {
-        $clone = clone $this;
-        $clone->cookies[] = ['name' => $name, 'value' => $value, 'options' => $options];
-        return $clone;
-    }
-
-    public function send(bool $isHead = false): void
-    {
-        http_response_code($this->status);
-        foreach ($this->headers as $name => $value) {
-            header($name . ': ' . $value, true);
-        }
-        foreach ($this->cookies as $c) {
-            setcookie($c['name'], $c['value'], $c['options']);
-        }
-        if ($isHead) {
-            return;
-        }
-        if ($this->filePath !== null) {
-            readfile($this->filePath);
-            return;
-        }
-        echo $this->body;
-    }
-}
-}
-
-namespace AiFramework {
 /**
  * High-speed hybrid router: O(1) static map + compiled regex for parameterized routes, with 405 Method Not Allowed detection.
  */
@@ -538,138 +752,6 @@ final class Router
         }
 
         return ['status' => 404];
-    }
-}
-}
-
-namespace AiFramework {
-/**
- * Cryptographic CSRF protection, Unicode-safe filename sanitization, strict ID parsing, and path-jail utilities.
- */
-final class Security
-{
-    public const CSRF_COOKIE = 'clouddrive_csrf';
-    public const CSRF_TTL = 43200; // 12 hours
-
-    private const PUBLIC_CACHEABLE_PATHS = [
-        '/manifest.webmanifest' => true,
-        '/robots.txt' => true,
-        '/sitemap.xml' => true,
-        '/llms.txt' => true,
-        '/llms-full.txt' => true,
-        '/openapi.json' => true,
-        '/api/health' => true,
-    ];
-
-    public function __construct(private readonly string $secretKey)
-    {
-        if (strlen($secretKey) < 32) {
-            throw new \RuntimeException('APP_SECRET must be configured with at least 32 bytes of entropy.');
-        }
-    }
-
-    public static function isPublicCacheablePath(string $path): bool
-    {
-        return isset(self::PUBLIC_CACHEABLE_PATHS[$path]);
-    }
-
-    public function issueCsrfToken(): string
-    {
-        $ts = (string)time();
-        $nonce = bin2hex(random_bytes(16));
-        $payload = $ts . '.' . $nonce;
-        $sig = hash_hmac('sha256', $payload, $this->secretKey);
-        return $payload . '.' . $sig;
-    }
-
-    public function verifyCsrfToken(?string $token): bool
-    {
-        if (!is_string($token) || substr_count($token, '.') !== 2) {
-            return false;
-        }
-        [$ts, $nonce, $sig] = explode('.', $token, 3);
-        if (!ctype_digit($ts) || !ctype_xdigit($nonce) || strlen($nonce) !== 32 || strlen($sig) !== 64) {
-            return false;
-        }
-        $age = time() - (int)$ts;
-        if ($age < -60 || $age > self::CSRF_TTL) {
-            return false;
-        }
-        $expected = hash_hmac('sha256', $ts . '.' . $nonce, $this->secretKey);
-        return hash_equals($expected, $sig);
-    }
-
-    public function verifyDoubleSubmit(?string $cookieToken, ?string $headerToken): bool
-    {
-        if (!$this->verifyCsrfToken($cookieToken) || !$this->verifyCsrfToken($headerToken)) {
-            return false;
-        }
-        return hash_equals((string)$cookieToken, (string)$headerToken);
-    }
-
-    public static function sanitizeItemName(string $name): string
-    {
-        $clean = mb_scrub($name, 'UTF-8');
-        // Strip ASCII control chars, slashes, and Unicode Bidi/RTLO spoofing controls
-        $clean = preg_replace('/[\x00-\x1F\x7F\/\\\\]+/u', ' ', $clean) ?? '';
-        $clean = preg_replace('/[\x{200E}\x{200F}\x{202A}-\x{202E}\x{2066}-\x{2069}\x{FEFF}]/u', '', $clean) ?? '';
-        $clean = trim(preg_replace('/\s+/u', ' ', $clean) ?? '');
-        $clean = trim(mb_substr($clean, 0, 200, 'UTF-8'));
-        if ($clean === '' || $clean === '.' || $clean === '..') {
-            return '';
-        }
-        return $clean;
-    }
-
-    public static function parseOptionalPositiveInt(mixed $value, string $fieldName = 'id', int $errorStatus = 422): ?int
-    {
-        if ($value === null || $value === '') {
-            return null;
-        }
-        if (is_bool($value) || is_array($value) || is_object($value)) {
-            throw new HttpException($errorStatus, "{$fieldName} の形式が不正です");
-        }
-        if (is_int($value)) {
-            if ($value < 1) {
-                throw new HttpException($errorStatus, "{$fieldName} は正の整数で指定してください");
-            }
-            return $value;
-        }
-        if (is_string($value) && ctype_digit($value)) {
-            $intVal = (int)$value;
-            if ($intVal >= 1) {
-                return $intVal;
-            }
-        }
-        throw new HttpException($errorStatus, "{$fieldName} は正の整数で指定してください");
-    }
-
-    public static function requireString(mixed $value, string $fieldName, bool $allowNull = false): ?string
-    {
-        if ($value === null && $allowNull) {
-            return null;
-        }
-        if (!is_string($value)) {
-            throw new HttpException(422, "{$fieldName} は文字列で指定してください");
-        }
-        return mb_scrub($value, 'UTF-8');
-    }
-
-    public static function resolveJailedPath(string $baseDir, string $storageName): ?string
-    {
-        $base = realpath($baseDir);
-        if ($base === false) {
-            return null;
-        }
-        $safeName = basename($storageName);
-        if ($safeName === '' || $safeName !== $storageName || str_contains($safeName, '..')) {
-            return null;
-        }
-        $full = realpath($base . DIRECTORY_SEPARATOR . $safeName);
-        if ($full === false || !str_starts_with($full, $base . DIRECTORY_SEPARATOR) || !is_file($full)) {
-            return null;
-        }
-        return $full;
     }
 }
 }
@@ -1240,6 +1322,23 @@ $typeFilters = [
         }
     }
     /** @param array<string, mixed> $__data */
+    public static function render_offline(array $__data, callable $e, callable $jsonSafe): string
+    {
+        extract($__data, EXTR_SKIP);
+        ob_start();
+        try {
+            ?><article class="content-page">
+  <h1>オフライン状態です</h1>
+  <p>インターネット接続が一時的に切断されています。接続が回復したら再読み込みして最新のCloudDriveファイルにアクセスしてください。</p>
+  <p><a class="btn-primary" style="display:inline-flex;align-items:center" href="/">マイドライブを再読み込み</a></p>
+</article><?php
+            return (string)ob_get_clean();
+        } catch (\Throwable $ex) {
+            ob_end_clean();
+            throw $ex;
+        }
+    }
+    /** @param array<string, mixed> $__data */
     public static function render_share(array $__data, callable $e, callable $jsonSafe): string
     {
         extract($__data, EXTR_SKIP);
@@ -1247,7 +1346,12 @@ $typeFilters = [
         try {
             ?><?php
 $isFolder = (int)$item['is_folder'] === 1;
-$isImg = !$isFolder && in_array(strtolower((string)$item['mime_type']), ['image/png', 'image/jpeg', 'image/webp', 'image/gif'], true);
+$mimeLower = strtolower((string)$item['mime_type']);
+$extLower = strtolower((string)($item['extension'] ?? ''));
+$isImg = !$isFolder && in_array($mimeLower, ['image/png', 'image/jpeg', 'image/webp', 'image/gif'], true);
+$isVideo = !$isFolder && (str_starts_with($mimeLower, 'video/') || in_array($extLower, ['mp4', 'm4v', 'webm', 'mov', 'ogv'], true));
+$isAudio = !$isFolder && (str_starts_with($mimeLower, 'audio/') || in_array($extLower, ['mp3', 'm4a', 'ogg', 'wav', 'flac', 'aac'], true));
+$dlHref = !empty($item['direct_url']) ? (string)$item['direct_url'] : ('/api/files/' . (int)$item['id'] . '/download');
 ?>
 <article class="content-page">
   <h1><?= $e($item['name']) ?></h1>
@@ -1262,10 +1366,14 @@ $isImg = !$isFolder && in_array(strtolower((string)$item['mime_type']), ['image/
 
   <?php if (!$isFolder): ?>
     <?php if ($isImg): ?>
-      <p style="margin-top:16px"><img src="/api/files/<?= (int)$item['id'] ?>/preview" alt="<?= $e($item['name']) ?>" width="640" height="360" style="max-width:100%;height:auto;border-radius:8px;border:1px solid #dde3ea"></p>
+      <p style="margin-top:16px"><img src="<?= $e(!empty($item['direct_url']) ? (string)$item['direct_url'] : '/api/files/' . (int)$item['id'] . '/preview') ?>" alt="<?= $e($item['name']) ?>" width="640" height="360" style="max-width:100%;height:auto;border-radius:8px;border:1px solid #dde3ea"></p>
+    <?php elseif ($isVideo): ?>
+      <p style="margin-top:16px"><video controls playsinline preload="metadata" src="<?= $e($dlHref) ?>" style="max-width:100%;max-height:540px;border-radius:8px;background:#000"></video></p>
+    <?php elseif ($isAudio): ?>
+      <p style="margin-top:16px"><audio controls preload="metadata" src="<?= $e($dlHref) ?>" style="width:min(560px,100%)"></audio></p>
     <?php endif; ?>
     <p style="margin-top:20px;display:flex;flex-wrap:wrap;gap:10px">
-      <a class="btn-primary" style="display:inline-flex;align-items:center" href="/api/files/<?= (int)$item['id'] ?>/download">このファイルをダウンロード</a>
+      <a class="btn-primary" style="display:inline-flex;align-items:center" href="<?= $e($dlHref) ?>" download="<?= $e($item['name']) ?>">このファイルをダウンロード</a>
       <a class="btn-secondary" style="display:inline-flex;align-items:center" href="/">マイドライブへ戻る</a>
     </p>
   <?php else: ?>
@@ -1287,7 +1395,7 @@ $isImg = !$isFolder && in_array(strtolower((string)$item['mime_type']), ['image/
               <td><?= $e(UiHelper::formatBytes((int)$ch['size_bytes'], $chFolder)) ?></td>
               <td>
                 <?php if (!$chFolder): ?>
-                  <a href="/api/files/<?= (int)$ch['id'] ?>/download">ダウンロード</a>
+                  <a href="<?= $e(!empty($ch['direct_url']) ? (string)$ch['direct_url'] : '/api/files/' . (int)$ch['id'] . '/download') ?>" download="<?= $e($ch['name']) ?>">ダウンロード</a>
                 <?php else: ?>
                   フォルダ
                 <?php endif; ?>
@@ -1299,23 +1407,6 @@ $isImg = !$isFolder && in_array(strtolower((string)$item['mime_type']), ['image/
     <?php endif; ?>
     <p style="margin-top:16px"><a class="btn-secondary" style="display:inline-flex;align-items:center" href="/">マイドライブへ戻る</a></p>
   <?php endif; ?>
-</article><?php
-            return (string)ob_get_clean();
-        } catch (\Throwable $ex) {
-            ob_end_clean();
-            throw $ex;
-        }
-    }
-    /** @param array<string, mixed> $__data */
-    public static function render_offline(array $__data, callable $e, callable $jsonSafe): string
-    {
-        extract($__data, EXTR_SKIP);
-        ob_start();
-        try {
-            ?><article class="content-page">
-  <h1>オフライン状態です</h1>
-  <p>インターネット接続が一時的に切断されています。接続が回復したら再読み込みして最新のCloudDriveファイルにアクセスしてください。</p>
-  <p><a class="btn-primary" style="display:inline-flex;align-items:center" href="/">マイドライブを再読み込み</a></p>
 </article><?php
             return (string)ob_get_clean();
         } catch (\Throwable $ex) {
@@ -1365,8 +1456,35 @@ use AiFramework\Security;
 final class DriveService
 {
     public const QUOTA_BYTES = 16106127360; // 15 GB
-    public const MAX_UPLOAD_BYTES = 20971520; // 20 MB
+    public const MAX_UPLOAD_BYTES = 209715200;     // 200 MB (overridable via CLOUDDRIVE_MAX_UPLOAD_MB)
     public const MAX_DEPTH = 32;
+    /** @var array<string, true> Non-executable extensions safe for direct Apache/Nginx 206 partial download */
+    public const SAFE_DIRECT_EXTS = [
+        'mp4' => true, 'm4v' => true, 'webm' => true, 'mov' => true, 'ogv' => true, 'mkv' => true,
+        'mp3' => true, 'm4a' => true, 'ogg' => true, 'wav' => true, 'flac' => true, 'aac' => true,
+        'png' => true, 'jpg' => true, 'jpeg' => true, 'gif' => true, 'webp' => true, 'avif' => true, 'bmp' => true,
+        'pdf' => true, 'zip' => true, 'tar' => true, 'gz' => true, '7z' => true, 'rar' => true,
+        'txt' => true, 'md' => true, 'csv' => true, 'json' => true,
+        'doc' => true, 'docx' => true, 'xls' => true, 'xlsx' => true, 'ppt' => true, 'pptx' => true,
+    ];
+
+    public static function maxUploadBytes(): int
+    {
+        $mb = getenv('CLOUDDRIVE_MAX_UPLOAD_MB');
+        if (is_string($mb) && ctype_digit($mb) && (int)$mb > 0) {
+            return (int)$mb * 1048576;
+        }
+        return self::MAX_UPLOAD_BYTES;
+    }
+
+    public static function isSafeDirectStorageName(?string $storageName): bool
+    {
+        if (!is_string($storageName) || $storageName === '' || str_starts_with($storageName, '.')) {
+            return false;
+        }
+        $ext = strtolower(pathinfo($storageName, PATHINFO_EXTENSION));
+        return isset(self::SAFE_DIRECT_EXTS[$ext]);
+    }
 
     private const ALLOWED_SORT = [
         'name' => 'name COLLATE NOCASE',
@@ -1618,7 +1736,7 @@ final class DriveService
         }
 
         $size = (int)filesize($tmpPath);
-        if ($size > self::MAX_UPLOAD_BYTES) {
+        if ($size > self::maxUploadBytes()) {
             throw new HttpException(413, 'ファイルサイズが上限（20MB）を超えています');
         }
 
@@ -1648,8 +1766,10 @@ final class DriveService
             $detectedMime = 'text/csv';
         }
 
-        // Always use inert .blob extension on disk (defense-in-depth against executable uploads)
-        $storageName = 'up-' . bin2hex(random_bytes(16)) . '.blob';
+        // Safe non-executable media/documents keep their real extension for native HTTP 206 partial downloads;
+        // executable/active types (.php, .html, .svg, .js, etc.) are always isolated as inert .blob files.
+        $safeExt = isset(self::SAFE_DIRECT_EXTS[$ext]) ? $ext : 'blob';
+        $storageName = 'cd-' . bin2hex(random_bytes(16)) . '.' . $safeExt;
         @mkdir($this->uploadsDir, 0775, true);
         $destPath = $this->uploadsDir . DIRECTORY_SEPARATOR . $storageName;
 
@@ -1802,8 +1922,16 @@ final class DriveService
 
         if (!$permanent && (int)$item['is_trashed'] === 0) {
             $now = gmdate('Y-m-d\TH:i:s\Z');
-            $this->db->transaction(function (Database $db) use ($id, $now): void {
-                // Recursively soft-delete item and all active descendants (SEC-07)
+            $toHide = $this->db->transaction(function (Database $db) use ($id, $now): array {
+                $files = $db->fetchAll(
+                    'WITH RECURSIVE tree(id, storage_name, is_trashed) AS (
+                        SELECT id, storage_name, is_trashed FROM items WHERE id = ?
+                        UNION
+                        SELECT i.id, i.storage_name, i.is_trashed FROM items i JOIN tree t ON i.parent_id = t.id
+                    )
+                    SELECT id, storage_name FROM tree WHERE is_trashed = 0 AND storage_name IS NOT NULL',
+                    [$id]
+                );
                 $db->execute(
                     'WITH RECURSIVE tree(id) AS (
                         SELECT id FROM items WHERE id = ?
@@ -1814,11 +1942,28 @@ final class DriveService
                     WHERE id IN (SELECT id FROM tree) AND is_trashed = 0',
                     [$id, $now, $now]
                 );
+                $renames = [];
+                foreach ($files as $f) {
+                    $oldName = (string)$f['storage_name'];
+                    if (!str_starts_with($oldName, '.trashed-')) {
+                        $newName = '.trashed-' . $oldName;
+                        $db->execute('UPDATE items SET storage_name = ? WHERE id = ?', [$newName, (int)$f['id']]);
+                        $renames[] = [$oldName, $newName];
+                    }
+                }
                 $db->execute(
                     'INSERT INTO activities (item_id, action, actor_name, detail, created_at) VALUES (?, ?, ?, ?, ?)',
                     [$id, 'trashed', '山田 太郎', 'ゴミ箱へ移動しました', $now]
                 );
-            });
+                return $renames;
+            }, true);
+
+            foreach ($toHide as [$oldName, $newName]) {
+                $oldPath = Security::resolveJailedPath($this->uploadsDir, $oldName);
+                if ($oldPath !== null) {
+                    @rename($oldPath, $this->uploadsDir . DIRECTORY_SEPARATOR . $newName);
+                }
+            }
             return ['deleted' => true, 'permanent' => false, 'id' => $id];
         }
 
@@ -1862,12 +2007,29 @@ final class DriveService
         $now = gmdate('Y-m-d\TH:i:s\Z');
         $trashedAt = $item['trashed_at'];
 
-        return $this->db->transaction(function (Database $db) use ($id, $parentId, $now, $trashedAt): array {
+        $res = $this->db->transaction(function (Database $db) use ($id, $parentId, $now, $trashedAt): array {
+            $filesToRestore = [];
+            $selfFile = $db->fetchOne('SELECT id, storage_name FROM items WHERE id = ? AND storage_name IS NOT NULL', [$id]);
+            if ($selfFile !== null) {
+                $filesToRestore[] = $selfFile;
+            }
+            if ($trashedAt !== null) {
+                $descFiles = $db->fetchAll(
+                    'WITH RECURSIVE tree(id, storage_name, is_trashed, trashed_at) AS (
+                        SELECT id, storage_name, is_trashed, trashed_at FROM items WHERE parent_id = ?
+                        UNION
+                        SELECT i.id, i.storage_name, i.is_trashed, i.trashed_at FROM items i JOIN tree t ON i.parent_id = t.id
+                    )
+                    SELECT id, storage_name FROM tree WHERE is_trashed = 1 AND trashed_at = ? AND storage_name IS NOT NULL',
+                    [$id, $trashedAt]
+                );
+                $filesToRestore = array_merge($filesToRestore, $descFiles);
+            }
+
             $db->execute(
                 'UPDATE items SET is_trashed = 0, trashed_at = NULL, parent_id = ?, updated_at = ? WHERE id = ?',
                 [$parentId, $now, $id]
             );
-            // Also restore descendants trashed together with this folder
             if ($trashedAt !== null) {
                 $db->execute(
                     'WITH RECURSIVE tree(id) AS (
@@ -1880,13 +2042,30 @@ final class DriveService
                     [$id, $now, $trashedAt]
                 );
             }
+            $renames = [];
+            foreach ($filesToRestore as $f) {
+                $oldName = (string)$f['storage_name'];
+                if (str_starts_with($oldName, '.trashed-')) {
+                    $newName = substr($oldName, 9);
+                    $db->execute('UPDATE items SET storage_name = ? WHERE id = ?', [$newName, (int)$f['id']]);
+                    $renames[] = [$oldName, $newName];
+                }
+            }
             $db->execute(
                 'INSERT INTO activities (item_id, action, actor_name, detail, created_at) VALUES (?, ?, ?, ?, ?)',
                 [$id, 'restored', '山田 太郎', 'ゴミ箱から復元しました', $now]
             );
             $row = $db->fetchOne('SELECT * FROM items WHERE id = ?', [$id]);
-            return $this->normalizeItem($row ?? []);
-        });
+            return ['item' => $this->normalizeItem($row ?? []), 'renames' => $renames];
+        }, true);
+
+        foreach ($res['renames'] as [$oldName, $newName]) {
+            $oldPath = Security::resolveJailedPath($this->uploadsDir, $oldName);
+            if ($oldPath !== null) {
+                @rename($oldPath, $this->uploadsDir . DIRECTORY_SEPARATOR . $newName);
+            }
+        }
+        return $res['item'];
     }
 
     /** @return array{emptied:int} */
@@ -2057,6 +2236,12 @@ final class DriveService
             'last_opened_at' => $row['last_opened_at'] !== null ? (string)$row['last_opened_at'] : null,
             'created_at' => (string)$row['created_at'],
             'updated_at' => (string)$row['updated_at'],
+            'direct_url' => ((int)$row['is_folder'] === 0
+                && (int)$row['is_trashed'] === 0
+                && self::isSafeDirectStorageName(isset($row['storage_name']) ? (string)$row['storage_name'] : null)
+                && (getenv('CLOUDDRIVE_DATA_DIR') === false || getenv('CLOUDDRIVE_DATA_DIR') === ''))
+                ? ('/' . rawurlencode((string)$row['storage_name']))
+                : null,
         ];
     }
 }
@@ -3109,7 +3294,7 @@ final class ApiController
     {
         // Detect post_max_size overflow -> return 413 consistently (SEC-13)
         $contentLength = (int)($request->header('content-length') ?? '0');
-        if ($contentLength > DriveService::MAX_UPLOAD_BYTES && empty($request->files)) {
+        if ($contentLength > DriveService::maxUploadBytes() && empty($request->files)) {
             throw new HttpException(413, 'リクエストサイズが上限（20MB）を超えています');
         }
         if (!isset($request->files['file']) || !is_array($request->files['file'])) {
@@ -3179,6 +3364,18 @@ final class ApiController
                 'Content-Disposition' => 'inline',
                 'Cache-Control' => 'private, max-age=3600',
                 'Content-Security-Policy' => "default-src 'none'; object-src 'self'; script-src 'none'; form-action 'none'; frame-ancestors 'self'",
+            ]);
+        }
+
+        $mediaMimes = [
+            'mp4' => 'video/mp4', 'm4v' => 'video/mp4', 'webm' => 'video/webm', 'mov' => 'video/quicktime', 'ogv' => 'video/ogg',
+            'mp3' => 'audio/mpeg', 'm4a' => 'audio/mp4', 'ogg' => 'audio/ogg', 'wav' => 'audio/wav', 'flac' => 'audio/flac', 'aac' => 'audio/aac',
+        ];
+        if (str_starts_with($mime, 'video/') || str_starts_with($mime, 'audio/') || isset($mediaMimes[$ext])) {
+            $serveMime = (str_starts_with($mime, 'video/') || str_starts_with($mime, 'audio/')) ? $mime : $mediaMimes[$ext];
+            return Response::file($path, $serveMime, null, [
+                'Cache-Control' => 'private, max-age=3600',
+                'Content-Security-Policy' => "default-src 'none'; media-src 'self'; frame-ancestors 'self'",
             ]);
         }
 
@@ -3312,14 +3509,14 @@ final class EmbeddedAssets
   '/assets/drive-ui.js' => 
   array (
     'offset' => 5359,
-    'length' => 47671,
+    'length' => 49044,
     'mime' => 'application/javascript; charset=utf-8',
     'cache' => 'public, max-age=31536000, immutable',
-    'etag' => '"7b80e0d8909a04e2"',
+    'etag' => '"8365d9a2d971a46c"',
   ),
   '/assets/app.css' => 
   array (
-    'offset' => 53030,
+    'offset' => 54403,
     'length' => 30730,
     'mime' => 'text/css; charset=utf-8',
     'cache' => 'public, max-age=31536000, immutable',
@@ -3327,7 +3524,7 @@ final class EmbeddedAssets
   ),
   '/assets/app.min.css' => 
   array (
-    'offset' => 83760,
+    'offset' => 85133,
     'length' => 24778,
     'mime' => 'text/css; charset=utf-8',
     'cache' => 'public, max-age=31536000, immutable',
@@ -3335,7 +3532,7 @@ final class EmbeddedAssets
   ),
   '/assets/favicon.svg' => 
   array (
-    'offset' => 108538,
+    'offset' => 109911,
     'length' => 449,
     'mime' => 'image/svg+xml; charset=utf-8',
     'cache' => 'public, max-age=31536000, immutable',
@@ -3343,7 +3540,7 @@ final class EmbeddedAssets
   ),
   '/assets/icon-192.png' => 
   array (
-    'offset' => 108987,
+    'offset' => 110360,
     'length' => 2249,
     'mime' => 'image/png',
     'cache' => 'public, max-age=31536000, immutable',
@@ -3351,7 +3548,7 @@ final class EmbeddedAssets
   ),
   '/assets/icon-maskable-192.png' => 
   array (
-    'offset' => 111236,
+    'offset' => 112609,
     'length' => 1896,
     'mime' => 'image/png',
     'cache' => 'public, max-age=31536000, immutable',
@@ -3359,7 +3556,7 @@ final class EmbeddedAssets
   ),
   '/assets/icon-512.png' => 
   array (
-    'offset' => 113132,
+    'offset' => 114505,
     'length' => 6084,
     'mime' => 'image/png',
     'cache' => 'public, max-age=31536000, immutable',
@@ -3367,7 +3564,7 @@ final class EmbeddedAssets
   ),
   '/assets/icon-maskable-512.png' => 
   array (
-    'offset' => 119216,
+    'offset' => 120589,
     'length' => 5392,
     'mime' => 'image/png',
     'cache' => 'public, max-age=31536000, immutable',
@@ -3375,7 +3572,7 @@ final class EmbeddedAssets
   ),
   '/assets/og-image.png' => 
   array (
-    'offset' => 124608,
+    'offset' => 125981,
     'length' => 9020,
     'mime' => 'image/png',
     'cache' => 'public, max-age=31536000, immutable',
@@ -3383,7 +3580,7 @@ final class EmbeddedAssets
   ),
   '/assets/screenshot-desktop.png' => 
   array (
-    'offset' => 133628,
+    'offset' => 135001,
     'length' => 135002,
     'mime' => 'image/png',
     'cache' => 'public, max-age=31536000, immutable',
@@ -3391,7 +3588,7 @@ final class EmbeddedAssets
   ),
   '/assets/screenshot-mobile.png' => 
   array (
-    'offset' => 268630,
+    'offset' => 270003,
     'length' => 170338,
     'mime' => 'image/png',
     'cache' => 'public, max-age=31536000, immutable',
@@ -3476,9 +3673,32 @@ CREATE TABLE IF NOT EXISTS activities (
 CREATE INDEX IF NOT EXISTS idx_activities_item ON activities(item_id, created_at DESC);
 ';
 
+    /** @var array<string, string> */
+    private const DIRECT_MIME_MAP = [
+        'mp4' => 'video/mp4', 'm4v' => 'video/mp4', 'webm' => 'video/webm', 'mov' => 'video/quicktime',
+        'ogv' => 'video/ogg', 'mkv' => 'video/x-matroska',
+        'mp3' => 'audio/mpeg', 'm4a' => 'audio/mp4', 'ogg' => 'audio/ogg', 'wav' => 'audio/wav',
+        'flac' => 'audio/flac', 'aac' => 'audio/aac',
+        'png' => 'image/png', 'jpg' => 'image/jpeg', 'jpeg' => 'image/jpeg', 'gif' => 'image/gif',
+        'webp' => 'image/webp', 'avif' => 'image/avif', 'bmp' => 'image/bmp',
+        'pdf' => 'application/pdf', 'zip' => 'application/zip', 'tar' => 'application/x-tar',
+        'gz' => 'application/gzip', '7z' => 'application/x-7z-compressed', 'rar' => 'application/vnd.rar',
+        'txt' => 'text/plain; charset=utf-8', 'md' => 'text/markdown; charset=utf-8',
+        'csv' => 'text/csv; charset=utf-8', 'json' => 'application/json; charset=utf-8',
+        'doc' => 'application/msword',
+        'docx' => 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'xls' => 'application/vnd.ms-excel',
+        'xlsx' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'ppt' => 'application/vnd.ms-powerpoint',
+        'pptx' => 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    ];
+
     /**
-     * Handles dotfile 403 protection and embedded static assets (/assets/*, /sw.js)
-     * before booting SQLite or the full application pipeline.
+     * Handles:
+     *  1) Defense-in-depth 403 protection for dotfiles, .blob, .sqlite*, .secret, .lock
+     *  2) Direct static file serving (with RFC 9110 Range / 206 Partial Content) for safe files
+     *     located in the same directory as index.php (when routed through PHP, e.g. `php -S`)
+     *  3) Embedded UI static assets (/assets/*, /sw.js) with ETag / 304
      */
     public static function tryServeStaticOrBlockDotfile(): bool
     {
@@ -3488,8 +3708,11 @@ CREATE INDEX IF NOT EXISTS idx_activities_item ON activities(item_id, created_at
             $path = '/';
         }
 
-        // Defense-in-depth: block dotfiles (except /.well-known) even without Nginx/Apache rules
-        if (preg_match('#^/\.(?!well-known(/|$))#', $path) === 1 || str_contains($path, '/.clouddrive_data')) {
+        // 1. Strictly block dotfiles (except /.well-known) and internal/isolated extensions
+        if (
+            preg_match('#^/\.(?!well-known(/|$))#', $path) === 1
+            || preg_match('#\.(?:blob|sqlite|sqlite-wal|sqlite-shm|secret|lock)$#i', $path) === 1
+        ) {
             http_response_code(403);
             header('Content-Type: text/plain; charset=utf-8');
             header('X-Content-Type-Options: nosniff');
@@ -3500,12 +3723,56 @@ CREATE INDEX IF NOT EXISTS idx_activities_item ON activities(item_id, created_at
             return true;
         }
 
+        $method = strtoupper((string)($_SERVER['REQUEST_METHOD'] ?? 'GET'));
+
+        // 2. Direct safe user/seed file in the same directory as index.php (e.g. /cd-xxxx.mp4)
+        // Note: on Apache/LiteSpeed/Nginx with `RewriteCond %{REQUEST_FILENAME} !-f`, the web server
+        // serves this directly in C with native 206 Partial Content without even invoking PHP.
+        // This fallback guarantees identical 206 Partial Content behavior on `php -S` too.
+        if (preg_match('#^/((?:cd-|up-|seed-)[a-zA-Z0-9._-]+)$#', $path, $m) === 1) {
+            $fileName = $m[1];
+            if (DriveService::isSafeDirectStorageName($fileName)) {
+                $configuredDir = getenv('CLOUDDRIVE_DATA_DIR');
+                $dataDir = (is_string($configuredDir) && $configuredDir !== '') ? rtrim($configuredDir, '/\\') : __DIR__;
+                $fullPath = Security::resolveJailedPath($dataDir, $fileName);
+                if ($fullPath !== null) {
+                    if ($method !== 'GET' && $method !== 'HEAD') {
+                        http_response_code(405);
+                        header('Allow: GET, HEAD');
+                        header('Content-Type: text/plain; charset=utf-8');
+                        echo 'Method Not Allowed';
+                        return true;
+                    }
+                    $ext = strtolower(pathinfo($fileName, PATHINFO_EXTENSION));
+                    $mime = self::DIRECT_MIME_MAP[$ext] ?? 'application/octet-stream';
+                    $etag = '"' . md5($fileName . ':' . filesize($fullPath) . ':' . filemtime($fullPath)) . '"';
+                    $inm = (string)($_SERVER['HTTP_IF_NONE_MATCH'] ?? '');
+                    if ($inm !== '' && trim($inm) === $etag && empty($_SERVER['HTTP_RANGE'])) {
+                        header('ETag: ' . $etag);
+                        header('Cache-Control: public, max-age=3600');
+                        header('Accept-Ranges: bytes');
+                        http_response_code(304);
+                        return true;
+                    }
+                    $res = Response::file($fullPath, $mime, null, [
+                        'ETag' => $etag,
+                        'Cache-Control' => 'public, max-age=3600',
+                        'X-Framework' => 'ai-framework',
+                        'X-Content-Type-Options' => 'nosniff',
+                        'Referrer-Policy' => 'strict-origin-when-cross-origin',
+                    ]);
+                    $res->send($method === 'HEAD');
+                    return true;
+                }
+            }
+        }
+
+        // 3. Embedded UI static assets (/assets/*, /sw.js)
         $meta = EmbeddedAssets::MANIFEST[$path] ?? null;
         if ($meta === null) {
             return false;
         }
 
-        $method = strtoupper((string)($_SERVER['REQUEST_METHOD'] ?? 'GET'));
         if ($method !== 'GET' && $method !== 'HEAD') {
             http_response_code(405);
             header('Allow: GET, HEAD');
@@ -3548,34 +3815,27 @@ CREATE INDEX IF NOT EXISTS idx_activities_item ON activities(item_id, created_at
     /** @return array{dataDir:string, dbPath:string, uploadsDir:string, secret:string} */
     public static function prepareEnvironment(): array
     {
+        // Default data & uploads area = EXACT SAME directory as index.php (__DIR__)
+        // so web servers serve safe media/documents directly with native HTTP 206 Partial Content!
         $configuredDir = getenv('CLOUDDRIVE_DATA_DIR');
         $dataDir = (is_string($configuredDir) && $configuredDir !== '')
             ? rtrim($configuredDir, '/\\')
-            : (__DIR__ . DIRECTORY_SEPARATOR . '.clouddrive_data');
+            : __DIR__;
 
-        $uploadsDir = $dataDir . DIRECTORY_SEPARATOR . 'uploads';
-        $dbPath = $dataDir . DIRECTORY_SEPARATOR . 'database.sqlite';
-
-        if (!is_dir($uploadsDir)) {
-            @mkdir($uploadsDir, 0700, true);
+        if (!is_dir($dataDir)) {
+            @mkdir($dataDir, 0755, true);
         }
 
-        // Protect data directory on Apache / LiteSpeed rental servers
-        $dataHtaccess = $dataDir . DIRECTORY_SEPARATOR . '.htaccess';
-        if (!is_file($dataHtaccess)) {
-            @file_put_contents(
-                $dataHtaccess,
-                "<IfModule mod_authz_core.c>\n  Require all denied\n</IfModule>\n<IfModule !mod_authz_core.c>\n  Order allow,deny\n  Deny from all\n</IfModule>\n"
-            );
-            @file_put_contents($dataDir . DIRECTORY_SEPARATOR . 'index.html', '');
-        }
+        $uploadsDir = $dataDir;
+        $dbPath = $dataDir . DIRECTORY_SEPARATOR . '.clouddrive.sqlite';
+        $secretFile = $dataDir . DIRECTORY_SEPARATOR . '.clouddrive.secret';
+        $lockFile = $dataDir . DIRECTORY_SEPARATOR . '.clouddrive.lock';
 
-        // On Apache/LiteSpeed shared hosting, auto-create clean rewrite .htaccess if absent
+        // On Apache/LiteSpeed shared hosting, auto-create hardened .htaccess if absent
         self::maybeCreateRootHtaccess();
 
         // Fast-path once initialized
         $envSecret = getenv('APP_SECRET');
-        $secretFile = $dataDir . DIRECTORY_SEPARATOR . '.app_secret';
         $secret = (is_string($envSecret) && strlen($envSecret) >= 32) ? $envSecret : '';
 
         if ($secret === '' && is_file($secretFile)) {
@@ -3587,7 +3847,7 @@ CREATE INDEX IF NOT EXISTS idx_activities_item ON activities(item_id, created_at
 
         $needsInit = ($secret === '') || !is_file($dbPath) || filesize($dbPath) === 0;
         if ($needsInit) {
-            $lockFp = fopen($dataDir . DIRECTORY_SEPARATOR . '.init.lock', 'c+');
+            $lockFp = fopen($lockFile, 'c+');
             if ($lockFp !== false) {
                 flock($lockFp, LOCK_EX);
                 try {
@@ -3637,12 +3897,24 @@ CREATE INDEX IF NOT EXISTS idx_activities_item ON activities(item_id, created_at
             return;
         }
         $self = basename(__FILE__);
-        // Rental-server safe (no Options directive that triggers HTTP 500 on Sakura/Lolipop)
+        // Rental-server safe (no Options directive that triggers HTTP 500 on Sakura/Lolipop).
+        // Real safe files in __DIR__ (e.g. cd-xxxx.mp4) bypass PHP via `!-f` for native HTTP 206 partial downloads,
+        // while dotfiles (.clouddrive.sqlite, .clouddrive.secret, .trashed-*) and .blob files are strictly denied.
         $rules = <<<HT
 DirectoryIndex {$self}
+<FilesMatch "(^\.(?!well-known)|\.blob$|\.sqlite(-wal|-shm)?$|\.secret$|\.lock$)">
+  <IfModule mod_authz_core.c>
+    Require all denied
+  </IfModule>
+  <IfModule !mod_authz_core.c>
+    Order allow,deny
+    Deny from all
+  </IfModule>
+</FilesMatch>
 <IfModule mod_rewrite.c>
   RewriteEngine On
   RewriteRule ^\.(?!well-known/) - [F,L]
+  RewriteRule \.(?:blob|sqlite|sqlite-wal|sqlite-shm|secret|lock)$ - [F,L]
   RewriteCond %{REQUEST_FILENAME} !-f
   RewriteRule ^ {$self} [QSA,L]
 </IfModule>
@@ -4265,9 +4537,9 @@ foreach ($extraTemplates as $tpl) {
 
 // 4. Trashed items (so Trash view works out of the box)
 $trashedItems = [
-    ['name' => '旧版_ロゴ案_v0.txt', 'mime' => 'text/plain', 'ext' => 'txt', 'storage' => 'seed-trash-logo.txt', 'content' => "廃止された旧バージョンのロゴ検討メモ\n", 'desc' => '不要になった旧ドラフト'],
-    ['name' => 'テスト出力_202610.csv', 'mime' => 'text/csv', 'ext' => 'csv', 'storage' => 'seed-trash-test.csv', 'content' => "id,status\n1,deprecated\n", 'desc' => '検証完了済みのダミーデータ'],
-    ['name' => '下書きメモ_削除予定.md', 'mime' => 'text/markdown', 'ext' => 'md', 'storage' => 'seed-trash-draft.md', 'content' => "# 削除予定の下書き\n整理のためゴミ箱へ移動。\n", 'desc' => '整理対象のメモ'],
+    ['name' => '旧版_ロゴ案_v0.txt', 'mime' => 'text/plain', 'ext' => 'txt', 'storage' => '.trashed-seed-trash-logo.txt', 'content' => "廃止された旧バージョンのロゴ検討メモ\n", 'desc' => '不要になった旧ドラフト'],
+    ['name' => 'テスト出力_202610.csv', 'mime' => 'text/csv', 'ext' => 'csv', 'storage' => '.trashed-seed-trash-test.csv', 'content' => "id,status\n1,deprecated\n", 'desc' => '検証完了済みのダミーデータ'],
+    ['name' => '下書きメモ_削除予定.md', 'mime' => 'text/markdown', 'ext' => 'md', 'storage' => '.trashed-seed-trash-draft.md', 'content' => "# 削除予定の下書き\n整理のためゴミ箱へ移動。\n", 'desc' => '整理対象のメモ'],
 ];
 
 foreach ($trashedItems as $t) {
@@ -4298,12 +4570,12 @@ $pdo->commit();
     }
 }
 
-// 1. Fast-path: dotfile 403 protection & embedded static assets (/assets/*, /sw.js)
+// 1. Fast-path: dotfile/secret/blob 403 guard, direct Range file fallback, & embedded UI assets
 if (SingleFileRuntime::tryServeStaticOrBlockDotfile()) {
     return;
 }
 
-// 2. Zero-config rental server runtime preparation (data dir, secret, SQLite auto-init)
+// 2. Zero-config rental server runtime preparation (same dir as index.php, secret, SQLite auto-init)
 $env = SingleFileRuntime::prepareEnvironment();
 
 // 3. Boot AI Custom Framework DI Container & Application
@@ -4950,7 +5222,7 @@ export function initCloudDrive() {
           <dt>サイズ</dt><dd>${esc(formatBytes(item.size_bytes, Number(item.is_folder) === 1))}</dd>
           <dt>オーナー</dt><dd>${esc(item.owner_name)}</dd>
           <dt>更新日時</dt><dd>${esc(formatDate(item.updated_at))}</dd>
-          <dt>共有</dt><dd>${Number(item.is_shared) === 1 ? 'リンクを知っている全員が閲覧可' : '非公開'}</dd>
+          <dt>共有</dt><dd>${Number(item.is_shared) === 1 ? 'リンクを知っている全員が閲覧可' : '非公開'}</dd>${item.direct_url ? `<dt>直接URL</dt><dd><a href="${esc(item.direct_url)}" download="${esc(item.name)}">${esc(item.direct_url)}</a></dd>` : ''}
         </dl>
         ${isTrashed ? '' : `<div class="form-field" style="margin-top:14px">
           <label for="detail-desc-input">説明</label>
@@ -5005,26 +5277,50 @@ export function initCloudDrive() {
       window.location.href = `/drive/folders/${item.id}`;
       return;
     }
+    const directUrl = item.direct_url || null;
+    const downloadHref = directUrl || `/api/files/${item.id}/download`;
     previewTitle.textContent = item.name;
-    previewDownloadLink.href = `/api/files/${item.id}/download`;
+    previewDownloadLink.href = downloadHref;
+    previewDownloadLink.setAttribute('download', item.name);
     previewBody.innerHTML = '<p style="color:#ffffff">読み込み中...</p>';
     previewBackdrop.classList.add('open');
 
     const mime = (item.mime_type || '').toLowerCase();
+    const ext = (item.extension || '').toLowerCase();
     const previewUrl = `/api/files/${item.id}/preview`;
+    const mediaSrc = directUrl || previewUrl;
 
     if (INLINE_IMAGE_MIMES.has(mime)) {
       const img = document.createElement('img');
       img.className = 'preview-img';
-      img.src = previewUrl;
+      img.src = mediaSrc;
       img.alt = item.name;
       previewBody.replaceChildren(img);
+      return;
+    }
+    if (mime.startsWith('video/') || ['mp4', 'm4v', 'webm', 'mov', 'ogv'].includes(ext)) {
+      const video = document.createElement('video');
+      video.controls = true;
+      video.playsInline = true;
+      video.preload = 'metadata';
+      video.src = mediaSrc;
+      video.style.cssText = 'max-width:100%;max-height:78vh;border-radius:12px;background:#000';
+      previewBody.replaceChildren(video);
+      return;
+    }
+    if (mime.startsWith('audio/') || ['mp3', 'm4a', 'ogg', 'wav', 'flac', 'aac'].includes(ext)) {
+      const audio = document.createElement('audio');
+      audio.controls = true;
+      audio.preload = 'metadata';
+      audio.src = mediaSrc;
+      audio.style.cssText = 'width:min(560px,90vw)';
+      previewBody.replaceChildren(audio);
       return;
     }
     if (mime === 'application/pdf') {
       const iframe = document.createElement('iframe');
       iframe.className = 'preview-pdf';
-      iframe.src = previewUrl;
+      iframe.src = mediaSrc;
       iframe.title = item.name;
       previewBody.replaceChildren(iframe);
       return;
@@ -5291,7 +5587,7 @@ export function initCloudDrive() {
       ? `<button type="button" class="menu-item" data-menu-action="restore">復元する</button>
          <button type="button" class="menu-item danger" data-menu-action="delete-permanent">完全に削除</button>`
       : `<button type="button" class="menu-item" data-menu-action="open">${isFolder ? 'フォルダを開く' : 'プレビュー'}</button>
-         ${isFolder ? '' : `<a class="menu-item" href="/api/files/${item.id}/download">ダウンロード</a>`}
+         ${isFolder ? '' : `<a class="menu-item" href="${esc(item.direct_url || '/api/files/' + item.id + '/download')}" download="${esc(item.name)}">ダウンロード</a>`}
          <button type="button" class="menu-item" data-menu-action="share">共有リンク</button>
          <button type="button" class="menu-item" data-menu-action="star">${Number(item.is_starred) === 1 ? 'スターを外す' : 'スターを付ける'}</button>
          <button type="button" class="menu-item" data-menu-action="rename">名前を変更</button>
@@ -5447,7 +5743,7 @@ export function initCloudDrive() {
   const selRestoreBtn = document.getElementById('sel-restore-btn');
   const selClearBtn = document.getElementById('sel-clear-btn');
 
-  if (selDownloadBtn) selDownloadBtn.addEventListener('click', () => { const it = getSelectedItem(); if (it) window.location.href = `/api/files/${it.id}/download`; });
+  if (selDownloadBtn) selDownloadBtn.addEventListener('click', () => { const it = getSelectedItem(); if (!it) return; const a = document.createElement('a'); a.href = it.direct_url || `/api/files/${it.id}/download`; a.download = it.name; document.body.appendChild(a); a.click(); a.remove(); });
   if (selStarBtn) selStarBtn.addEventListener('click', () => { const it = getSelectedItem(); if (it) toggleStar(it); });
   if (selShareBtn) selShareBtn.addEventListener('click', () => { const it = getSelectedItem(); if (it) openShareModal(it); });
   if (selRenameBtn) selRenameBtn.addEventListener('click', () => { const it = getSelectedItem(); if (it) openRenameModal(it); });

@@ -95,22 +95,23 @@ Google Driveと同等のMaterial Design 3 UI・機能・PWA・SEO/AEO/GEO/AIO/LL
 
 ### ★ 最短30秒：単一ファイル版 AI自作FW（レンタルサーバーに1ファイル置くだけ）
 
-[**`dist/index.php`**](dist/index.php)（約 645 KB）は、AI自作フレームワーク本体・全HTMLテンプレート・CSS/JS・Service Worker・PWAアイコン/スクリーンショット・SQLiteスキーマ＆自動シーダーを **たった1つのPHPファイルに完全統合** したスタンドアロン版です。
+[**`dist/index.php`**](dist/index.php)（約 661 KB）は、AI自作フレームワーク本体・全HTMLテンプレート・CSS/JS・Service Worker・PWAアイコン/スクリーンショット・SQLiteスキーマ＆自動シーダーを **たった1つのPHPファイルに完全統合** したスタンドアロン版です。
 
 **エックスサーバー / さくらのレンタルサーバ / ロリポップ / ConoHa WING / MixHost** などの一般的なPHP 8.3対応レンタルサーバーに、FTPやファイルマネージャーで `index.php` をアップロードするだけでそのまま動作します（Composer・SSH・環境変数・手動DB構築すべて不要）。
 
 1. **`dist/index.php` をダウンロード**し、レンタルサーバーの公開ディレクトリ（ドメインまたはサブドメインのドキュメントルート、例: `public_html/index.php`）へアップロードする。
 2. ブラウザで `https://あなたのドメイン/` にアクセスする。
-3. **初回アクセス時に以下が自動構築され、すぐにGoogle Drive画面が表示されます**:
-   - `.clouddrive_data/`（権限 `0700`＋アクセス拒否 `.htaccess`＋空 `index.html`）を自動作成
-   - 256bit暗号学的ランダム鍵を `.clouddrive_data/.app_secret`（権限 `0600`）へ自動生成
-   - SQLite WALデータベース（`.clouddrive_data/database.sqlite`）を作成し、71件のサンプルファイル＆フォルダを自動投入（GD拡張が無い環境でもフォールバック動作）
-   - Apache / LiteSpeed 環境で `.htaccess` が未配置の場合、さくら/ロリポップ等でもHTTP 500を起こさない安全な `.htaccess`（`Options` ディレクティブ不使用＋ドットファイル403遮断＋クリーンURL転送）を自動生成
-   - `/assets/*`・`/sw.js`・アイコン等は `__HALT_COMPILER()` 以降のバイナリ領域から `ETag` / `304 Not Modified` 対応で直接配信
+3. **初回アクセス時に `index.php` と同じディレクトリにデータ領域が自動構築されます**:
+   - **直接ダウンロード＆HTTP 206 パーシャルダウンロード（Range）対応**: アップロードした安全なメディア・文書（`mp4`, `m4v`, `webm`, `mov`, `mp3`, `m4a`, `wav`, `pdf`, `png`, `jpg`, `zip` 等）は `index.php` と同じディレクトリへ `cd-<32hex>.<ext>` として保存されます。Apache / LiteSpeed / Nginx が PHP を介さず直接静的配信するため、**動画（`.mp4` 等）のシーク再生や分割・レジュームダウンロード（`206 Partial Content` / `Accept-Ranges: bytes`）がネイティブに機能**します（`php -S` や `/api/files/{id}/download`・`/preview` 側でも RFC 9110 Range を実装済み）。
+   - **RCE・XSS・データ漏洩の多層防御**: `.php` / `.phtml` / `.html` / `.svg` / `.js` 等の実行・スクリプト可能ファイルは自動的に `cd-<32hex>.blob` として隔離し、内部ファイル（`.clouddrive.sqlite`・`.clouddrive.secret`（権限 `0600`）・`.clouddrive.lock`）およびゴミ箱内ファイル（`.trashed-*` へ自動リネーム）とあわせて、`.htaccess`（`<FilesMatch>`＋`RewriteRule`）と PHP 側の二重 `403 Forbidden` で直接アクセスを遮断します。
+   - **SQLite WAL 自動初期化＆71件シード**: `.clouddrive.sqlite` を作成しサンプルを自動投入（GD拡張が無い環境でもフォールバック動作）。
+   - **レンタルサーバー安全な `.htaccess` 自動生成**: Apache / LiteSpeed 環境で `.htaccess` 未配置の場合、さくら/ロリポップ等でも HTTP 500 を起こさない安全なルール（`Options` 不使用＋ドットファイル/`.blob`/`.sqlite` 遮断＋`!-f` 静的ファイル直接配信）を自動生成します。
+   - **UI静的資産の自己完結配信**: `/assets/*`・`/sw.js`・アイコン等は `__HALT_COMPILER()` 以降のバイナリ領域から `ETag` / `304 Not Modified` 付きで直接配信します。
 
 > **オプション環境変数（必要な場合のみ）**:
+> - `CLOUDDRIVE_MAX_UPLOAD_MB=200`: アップロード上限（MB、デフォルト `200`。サーバーの `upload_max_filesize` / `post_max_size` も合わせて調整）
 > - `CLOUDDRIVE_SKIP_SEED=1`: 初回サンプル71件を入れず、空のドライブとして開始
-> - `CLOUDDRIVE_DATA_DIR=/path/outside/public_html`: データ保存先を公開ディレクトリ外へ明示移動
+> - `CLOUDDRIVE_DATA_DIR=/path/to/dir`: データ・ファイル保存先を別ディレクトリへ変更したい場合
 > - `APP_URL=https://drive.example.com`: `canonical` / `robots.txt` / `sitemap.xml` のオリジンURLを厳格固定
 > - `APP_SECRET=<64文字の16進乱数>`: CSRF署名鍵を環境変数で明示指定
 > - `CLOUDDRIVE_NO_HTACCESS=1`: `.htaccess` の自動生成を無効化
